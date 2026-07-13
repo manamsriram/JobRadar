@@ -1,0 +1,6 @@
+[
+  { "name": "OpenAI",  "ats": "ashby",      "slug": "openai",  "domain": "openai.com",  "tier": 1 },
+  { "name": "Stripe",  "ats": "greenhouse", "slug": "stripe",  "domain": "stripe.com",  "tier": 1 },
+  { "name": "Spotify", "ats": "lever",      "slug": "spotify", "domain": "spotify.com", "tier": 1 },
+  { "name": "Ramp",    "ats": "ashby",      "slug": "ramp",    "domain": "ramp.com",    "tier": 1 }
+]
