@@ -15,16 +15,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
@@ -38,5 +35,13 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: frontend/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - id: deploy
         uses: actions/deploy-pages@v4
