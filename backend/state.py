@@ -53,8 +53,9 @@ async def purge_old(days: int) -> None:
     base, headers = _conf()
     headers = {**headers, "Prefer": "return=minimal"}
     async with httpx.AsyncClient() as client:
+        # params (not f-string) so httpx encodes the '+' in the tz offset (else 400).
         r = await client.delete(
-            f"{base}?posted_at=lt.{cutoff}", headers=headers, timeout=TIMEOUT
+            base, params={"posted_at": f"lt.{cutoff}"}, headers=headers, timeout=TIMEOUT
         )
         r.raise_for_status()
 

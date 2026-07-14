@@ -4,15 +4,16 @@ import JobTable from "./components/JobTable";
 import FilterBar from "./components/FilterBar";
 import LiveBadge from "./components/LiveBadge";
 import type { Job } from "./types";
+import { API_BASE } from "./api";
 
 export default function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [filters, setFilters] = useState({ title: "", location: "" });
-  const liveJobs = useSSE("/api/stream");
+  const liveJobs = useSSE(`${API_BASE}/api/stream`);
 
   // Initial job list on mount.
   useEffect(() => {
-    fetch("/api/jobs")
+    fetch(`${API_BASE}/api/jobs`)
       .then((r) => r.json())
       .then(setJobs)
       .catch(() => setJobs([]));

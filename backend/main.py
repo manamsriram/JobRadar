@@ -9,6 +9,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -36,6 +37,24 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Frontend is served from GitHub Pages (separate origin); allow it to call the API.
+# ALLOWED_ORIGINS is comma-separated; defaults to the Pages origin.
+_origins = os.getenv(
+    "ALLOWED_ORIGINS", "https://manamsriram.github.io"
+).split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _origins if o.strip()],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/healthz")
+async def healthz():
+    # Cheap liveness endpoint for UptimeRobot keep-alive (no DB hit).
+    return {"ok": True}
 
 
 @app.get("/api/jobs")
