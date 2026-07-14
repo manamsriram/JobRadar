@@ -95,7 +95,8 @@ async def poll_loop(companies: list[dict] = COMPANIES) -> None:
                             _push_live(job)
 
                     seen[job["id"]] = job
-                    await state.upsert_job(job)  # F3: persist per job
+                    if job["matched"]:
+                        await state.upsert_job(job)  # F3: persist matched only
 
                 await asyncio.sleep(random.uniform(1.5, 3.0))  # polite delay
 
