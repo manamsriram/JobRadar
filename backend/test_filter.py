@@ -28,6 +28,19 @@ def test_excludes_wrong_location():
     assert matches(_job("Software Engineer", location="Tokyo, Japan")) is False
 
 
+def test_excludes_non_us_remote():
+    # Bare "remote"/"hybrid" must not smuggle in non-US roles.
+    for loc in ("India - Remote", "Remote - Brussels", "Seoul, South Korea (Hybrid)",
+                "Sydney (Hybrid)", "Toronto, CAN-Remote", "London, UK"):
+        assert matches(_job("Software Engineer", location=loc)) is False
+
+
+def test_keeps_us_remote_and_multi_city():
+    for loc in ("Remote - US", "US-Remote", "Remote", "Remote in the US",
+                "Chicago, Toronto, Atlanta", "SF, New York, Seattle, Dublin"):
+        assert matches(_job("Software Engineer", location=loc)) is True
+
+
 def test_excludes_non_matching_title():
     assert matches(_job("Product Designer")) is False
 

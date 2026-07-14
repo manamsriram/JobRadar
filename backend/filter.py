@@ -32,9 +32,18 @@ def matches(job: dict) -> bool:
     if any(kw in title for kw in ROLE_FILTERS["exclude"]):
         return False
 
-    # Must match at least one location (if any locations are configured)
-    if ROLE_FILTERS["locations"]:
-        if not any(loc in location for loc in ROLE_FILTERS["locations"]):
+    # Location: US only. A positive US signal wins (US multi-city roles often
+    # also list Toronto/Dublin). Otherwise plain remote/hybrid passes only when
+    # no non-US marker is present ("Remote - Brussels", "Seoul (Hybrid)" fail).
+    has_us = (
+        location.strip() in ("us", "u.s", "u.s.")
+        or any(loc in location for loc in ROLE_FILTERS["locations"])
+    )
+    if not has_us:
+        if "remote" in location or "hybrid" in location:
+            if any(m in location for m in ROLE_FILTERS["non_us"]):
+                return False
+        else:
             return False
 
     # Body-level exclusion: drop senior roles whose title looked entry-level

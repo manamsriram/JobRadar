@@ -18,11 +18,30 @@ ROLE_FILTERS = {
         "7+ years", "8+ years", "10+ years", "years of experience",
         " ii", " iii", " iv",
     ],
+    # Positive US signals. "remote"/"hybrid" are NOT here — alone they matched
+    # "India - Remote", "Seoul (Hybrid)", etc. Remote/hybrid is handled separately
+    # in filter.py: allowed only with a US signal or no non-US marker.
     "locations": [
-        "san jose", "san francisco", "bay area", "mountain view",
-        "sunnyvale", "palo alto", "menlo park", "remote", "hybrid",
+        "san jose", "san francisco", "sf", "bay area", "mountain view",
+        "sunnyvale", "palo alto", "menlo park",
+        "seattle", "new york", "nyc", "chicago", "austin", "boston",
+        "los angeles", "denver", "atlanta", "washington, dc", "washington dc",
         # "us" alone matched Austin/Houston/etc — use anchored forms instead
-        "(us", ", us", "us/", "united states", "usa", "u.s.",
+        "(us", ", us", "us/", "us-", "united states", "usa", "u.s.",
+    ],
+    # Non-US markers — reject a job if its location contains any, even when it
+    # also says "remote"/"hybrid" (e.g. "Remote - Brussels", "Sydney (Hybrid)").
+    "non_us": [
+        ", uk", "united kingdom", "london", "ireland", "dublin",
+        "japan", "tokyo", "korea", "seoul", "singapore",
+        "india", "bengaluru", "bangalore", "delhi",
+        "canada", "toronto", "can-remote", "mexico",
+        "australia", "sydney", "melbourne",
+        "germany", "munich", "france", "paris",
+        "sweden", "stockholm", "spain", "madrid", "barcelona",
+        "brazil", "são paulo", "sao paulo", "uae", "abu dhabi",
+        "luxembourg", "switzerland", "zurich", "brussels", "belgium",
+        "netherlands", "amsterdam",
     ],
     # Body-level exclusions: strong senior-experience signals that slip past a
     # clean title. Kept to 5+ years only — lower thresholds ("2+ years preferred")
