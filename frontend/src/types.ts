@@ -13,5 +13,6 @@ export interface Job {
   url: string;
   ats: string;
   posted_at: string;
+  applied?: boolean;
   contacts?: Contact[];
 }

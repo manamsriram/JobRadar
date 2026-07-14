@@ -68,7 +68,10 @@ async def scrape_company(company: dict) -> list[dict]:
 async def poll_loop(companies: list[dict] = COMPANIES) -> None:
     while True:
         try:
-            await state.purge_old(days=PURGE_AFTER_DAYS)
+            try:
+                await state.purge_old(days=PURGE_AFTER_DAYS)
+            except Exception as e:  # e.g. `applied` column not migrated yet
+                log.warning("Purge skipped: %s", e)
             seed_mode = await state.is_empty()  # F2: silent-seed the first ever run
             seen = await state.load_seen()
             contacts_cache: dict[str, list] = {}  # per-cycle, per-domain (F6)

@@ -48,14 +48,33 @@ async def upsert_job(job: dict) -> None:
 
 
 async def purge_old(days: int) -> None:
-    """Delete jobs whose posted_at is older than `days` (server-side)."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    """Delete un-applied jobs posted before the calendar-day cutoff (safety net;
+    the Supabase pg_cron is the primary purger). Skipped gracefully by the caller
+    if the `applied` column isn't present yet."""
+    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
     base, headers = _conf()
     headers = {**headers, "Prefer": "return=minimal"}
     async with httpx.AsyncClient() as client:
-        # params (not f-string) so httpx encodes the '+' in the tz offset (else 400).
         r = await client.delete(
-            base, params={"posted_at": f"lt.{cutoff}"}, headers=headers, timeout=TIMEOUT
+            base,
+            params={"posted_at": f"lt.{cutoff}", "applied": "eq.false"},
+            headers=headers,
+            timeout=TIMEOUT,
+        )
+        r.raise_for_status()
+
+
+async def mark_applied(job_id: str) -> None:
+    """Flag a job applied=true so the purge/cron preserves it."""
+    base, headers = _conf()
+    headers = {**headers, "Prefer": "return=minimal"}
+    async with httpx.AsyncClient() as client:
+        r = await client.patch(
+            base,
+            params={"id": f"eq.{job_id}"},
+            headers=headers,
+            json={"applied": True},
+            timeout=TIMEOUT,
         )
         r.raise_for_status()
 

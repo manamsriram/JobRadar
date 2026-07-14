@@ -46,7 +46,7 @@ _origins = os.getenv(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _origins if o.strip()],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -60,6 +60,13 @@ async def healthz():
 @app.get("/api/jobs")
 async def get_jobs():
     return JSONResponse(await state.get_matched())
+
+
+@app.post("/api/jobs/{job_id}/apply")
+async def apply_job(job_id: str):
+    # Mark a job applied so the purge/cron preserves it past the 3-day window.
+    await state.mark_applied(job_id)
+    return {"ok": True}
 
 
 @app.get("/api/stream")

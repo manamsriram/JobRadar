@@ -1,9 +1,21 @@
 import { Fragment, useState } from "react";
 import type { Job } from "../types";
+import { API_BASE } from "../api";
 import ContactCard from "./ContactCard";
 
 export default function JobTable({ jobs }: { jobs: Job[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [applied, setApplied] = useState<Set<string>>(new Set());
+
+  // Optimistically flag applied, then persist so the purge/cron keeps the job.
+  async function markApplied(id: string) {
+    setApplied((prev) => new Set(prev).add(id));
+    try {
+      await fetch(`${API_BASE}/api/jobs/${id}/apply`, { method: "POST" });
+    } catch {
+      // optimistic — a failed call just won't preserve the job past 3 days
+    }
+  }
 
   return (
     <table className="w-full text-sm border-collapse">
@@ -14,48 +26,67 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
           <th className="p-2">Location</th>
           <th className="p-2">Posted</th>
           <th className="p-2">Apply</th>
+          <th className="p-2">Applied?</th>
         </tr>
       </thead>
       <tbody>
-        {jobs.map((job) => (
-          <Fragment key={job.id}>
-            <tr
-              className="border-b hover:bg-yellow-50 transition cursor-pointer"
-              onClick={() => setExpanded(expanded === job.id ? null : job.id)}
-            >
-              <td className="p-2 font-medium">{job.title}</td>
-              <td className="p-2">{job.company}</td>
-              <td className="p-2 text-gray-500">{job.location}</td>
-              <td className="p-2 text-gray-400">
-                {job.posted_at
-                  ? new Date(job.posted_at).toLocaleDateString()
-                  : "—"}
-              </td>
-              <td className="p-2">
-                <a
-                  href={job.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  Apply →
-                </a>
-              </td>
-            </tr>
-            {expanded === job.id && job.contacts && job.contacts.length > 0 && (
-              <tr>
-                <td colSpan={5} className="bg-gray-50 px-4 py-2">
-                  <div className="flex gap-3 flex-wrap">
-                    {job.contacts.map((c, i) => (
-                      <ContactCard key={i} contact={c} />
-                    ))}
-                  </div>
+        {jobs.map((job) => {
+          const isApplied = job.applied || applied.has(job.id);
+          return (
+            <Fragment key={job.id}>
+              <tr
+                className="border-b hover:bg-yellow-50 transition cursor-pointer"
+                onClick={() => setExpanded(expanded === job.id ? null : job.id)}
+              >
+                <td className="p-2 font-medium">{job.title}</td>
+                <td className="p-2">{job.company}</td>
+                <td className="p-2 text-gray-500">{job.location}</td>
+                <td className="p-2 text-gray-400">
+                  {job.posted_at
+                    ? new Date(job.posted_at).toLocaleDateString()
+                    : "—"}
+                </td>
+                <td className="p-2">
+                  <a
+                    href={job.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    Apply →
+                  </a>
+                </td>
+                <td className="p-2">
+                  {isApplied ? (
+                    <span className="text-green-600">✓ Applied</span>
+                  ) : (
+                    <button
+                      className="text-gray-500 hover:text-green-600 hover:underline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        markApplied(job.id);
+                      }}
+                    >
+                      Mark applied
+                    </button>
+                  )}
                 </td>
               </tr>
-            )}
-          </Fragment>
-        ))}
+              {expanded === job.id && job.contacts && job.contacts.length > 0 && (
+                <tr>
+                  <td colSpan={6} className="bg-gray-50 px-4 py-2">
+                    <div className="flex gap-3 flex-wrap">
+                      {job.contacts.map((c, i) => (
+                        <ContactCard key={i} contact={c} />
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
       </tbody>
     </table>
   );
