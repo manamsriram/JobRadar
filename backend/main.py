@@ -51,9 +51,9 @@ app.add_middleware(
 )
 
 
-@app.get("/healthz")
+@app.api_route("/healthz", methods=["GET", "HEAD"])
 async def healthz():
-    # Cheap liveness endpoint for UptimeRobot keep-alive (no DB hit).
+    # Cheap liveness endpoint for UptimeRobot keep-alive (HEAD by default; no DB hit).
     return {"ok": True}
 
 
