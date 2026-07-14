@@ -24,14 +24,21 @@ ROLE_FILTERS = {
         # "us" alone matched Austin/Houston/etc — use anchored forms instead
         "(us", ", us", "us/", "united states", "usa", "u.s.",
     ],
+    # Body-level exclusions: strong senior-experience signals that slip past a
+    # clean title. Kept to 5+ years only — lower thresholds ("2+ years preferred")
+    # show up in entry-level posts too and would wrongly drop new-grad roles.
+    "desc_exclude": [
+        "5+ years", "6+ years", "7+ years", "8+ years", "9+ years",
+        "10+ years", "5-7 years", "5-8 years", "7-10 years",
+    ],
 }
 
 # ---- Tuning (env-overridable) ----
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))
-PURGE_AFTER_DAYS = int(os.getenv("PURGE_AFTER_DAYS", "3"))
-# Only surface jobs posted within this many days (calendar-day granularity):
-# today=13 → keep 13,12,11,10.
-MAX_POSTED_AGE_DAYS = int(os.getenv("MAX_POSTED_AGE_DAYS", "3"))
+PURGE_AFTER_DAYS = int(os.getenv("PURGE_AFTER_DAYS", "14"))
+# Only surface jobs posted within this many days (calendar-day granularity).
+# 3 days yielded ~0 matches on these ATS boards; 14 balances freshness vs. volume.
+MAX_POSTED_AGE_DAYS = int(os.getenv("MAX_POSTED_AGE_DAYS", "14"))
 DIGEST_INTERVAL_HOURS = float(os.getenv("DIGEST_INTERVAL_HOURS", "4"))
 DIGEST_MAX_JOBS = int(os.getenv("DIGEST_MAX_JOBS", "5"))
 

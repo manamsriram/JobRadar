@@ -73,17 +73,25 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
                   )}
                 </td>
               </tr>
-              {expanded === job.id && job.contacts && job.contacts.length > 0 && (
-                <tr>
-                  <td colSpan={6} className="bg-gray-50 px-4 py-2">
-                    <div className="flex gap-3 flex-wrap">
-                      {job.contacts.map((c, i) => (
-                        <ContactCard key={i} contact={c} />
-                      ))}
-                    </div>
-                  </td>
-                </tr>
-              )}
+              {expanded === job.id &&
+                (job.description || (job.contacts && job.contacts.length > 0)) && (
+                  <tr>
+                    <td colSpan={6} className="bg-gray-50 px-4 py-2">
+                      {job.description && (
+                        <p className="text-gray-600 whitespace-pre-line mb-3 max-h-60 overflow-y-auto">
+                          {job.description}
+                        </p>
+                      )}
+                      {job.contacts && job.contacts.length > 0 && (
+                        <div className="flex gap-3 flex-wrap">
+                          {job.contacts.map((c, i) => (
+                            <ContactCard key={i} contact={c} />
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
             </Fragment>
           );
         })}

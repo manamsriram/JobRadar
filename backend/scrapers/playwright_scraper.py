@@ -40,5 +40,9 @@ async def fetch_custom(company: str, url: str) -> list[dict]:
             "location": "See listing",
             "url": link["href"],
             "posted_at": None,  # falls back to scraped_at in the orchestrator
+            # ponytail: index page has no body text. Description needs a per-job
+            # page.goto(href) — skipped (N navigations, costly on 512MB). Add a
+            # bounded detail-fetch here if custom companies ever get configured.
+            "description": "",
         })
     return jobs

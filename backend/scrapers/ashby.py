@@ -1,5 +1,7 @@
 import httpx
 
+from scrapers.util import plaintext
+
 
 async def fetch_ashby(slug: str) -> list[dict]:
     url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}"
@@ -16,5 +18,6 @@ async def fetch_ashby(slug: str) -> list[dict]:
             "location": j.get("location", ""),
             "url": j.get("jobUrl") or j.get("applyUrl", ""),
             "posted_at": j.get("publishedAt"),
+            "description": plaintext(j.get("descriptionPlain")),
         })
     return jobs

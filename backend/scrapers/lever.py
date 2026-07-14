@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 
 import httpx
 
+from scrapers.util import plaintext
+
 
 async def fetch_lever(slug: str) -> list[dict]:
     url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
@@ -23,5 +25,6 @@ async def fetch_lever(slug: str) -> list[dict]:
             "location": (j.get("categories") or {}).get("location", ""),
             "url": j.get("hostedUrl", ""),
             "posted_at": posted_at,
+            "description": plaintext(j.get("descriptionPlain")),
         })
     return jobs

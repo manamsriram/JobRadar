@@ -1,5 +1,7 @@
 import httpx
 
+from scrapers.util import plaintext
+
 
 async def fetch_greenhouse(slug: str) -> list[dict]:
     url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
@@ -17,5 +19,6 @@ async def fetch_greenhouse(slug: str) -> list[dict]:
             "url": j.get("absolute_url", ""),
             # Greenhouse exposes updated_at, not created_at (edited-old jobs look fresh).
             "posted_at": j.get("updated_at"),
+            "description": plaintext(j.get("content")),
         })
     return jobs

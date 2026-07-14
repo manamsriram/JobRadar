@@ -1,0 +1,21 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    paths: ["backend/**", ".github/workflows/ci.yml"]
+  pull_request:
+    paths: ["backend/**", ".github/workflows/ci.yml"]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # Tests are offline unit checks — only httpx (state.py) + pytest are needed,
+      # not the full playwright/uvicorn stack.
+      - run: pip install httpx pytest
+      - run: python -m pytest -q
+        working-directory: backend

@@ -9,8 +9,11 @@ def _iso(days_ago: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
 
 
-def _job(title, location="San Francisco, CA", posted_at=None):
-    return {"title": title, "location": location, "posted_at": posted_at}
+def _job(title, location="San Francisco, CA", posted_at=None, description=""):
+    return {
+        "title": title, "location": location,
+        "posted_at": posted_at, "description": description,
+    }
 
 
 def test_matches_new_grad_swe_in_sf():
@@ -36,10 +39,17 @@ def test_excludes_experience_and_level_in_title():
 
 
 def test_recency_window():
-    # No date → treated as fresh; recent passes; older than 3 days fails.
+    # No date → treated as fresh; within 14 days passes; older fails.
     assert matches(_job("Software Engineer")) is True
-    assert matches(_job("Software Engineer", posted_at=_iso(1))) is True
-    assert matches(_job("Software Engineer", posted_at=_iso(10))) is False
+    assert matches(_job("Software Engineer", posted_at=_iso(10))) is True
+    assert matches(_job("Software Engineer", posted_at=_iso(20))) is False
+
+
+def test_excludes_senior_experience_in_description():
+    # Clean title, but body demands 5+ years → dropped.
+    assert matches(_job("Software Engineer", description="Requires 5+ years of experience")) is False
+    # New-grad body with no strong signal → kept.
+    assert matches(_job("Software Engineer", description="New grad friendly, 0-2 years")) is True
 
 
 def test_get_new_jobs_returns_only_unseen():

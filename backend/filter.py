@@ -37,4 +37,9 @@ def matches(job: dict) -> bool:
         if not any(loc in location for loc in ROLE_FILTERS["locations"]):
             return False
 
+    # Body-level exclusion: drop senior roles whose title looked entry-level
+    description = job.get("description", "").lower()
+    if any(kw in description for kw in ROLE_FILTERS["desc_exclude"]):
+        return False
+
     return True
