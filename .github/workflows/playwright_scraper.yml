@@ -11,6 +11,9 @@ on:
   schedule:
     - cron: "*/30 * * * *" # every 30 min
 
+permissions:
+  contents: read
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
