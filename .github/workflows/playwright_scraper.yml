@@ -1,15 +1,15 @@
-# Phase 2 ONLY — disabled by default.
+# Phase 2 — active.
 #
-# When the VM can no longer spare RAM for Chromium, this Action runs the
-# Playwright scrapers off-box and POSTs results to /api/ingest, so the always-on
-# container never holds a browser. Enable by uncommenting the `schedule` trigger
-# and setting the INGEST_URL / INGEST_TOKEN repository secrets.
+# The host VM never spares RAM for Chromium (runs on a 1GB free-tier box), so
+# this Action runs the Playwright scrapers off-box and POSTs results to
+# /api/ingest. Requires the INGEST_URL / INGEST_TOKEN repository secrets to be
+# set (Settings > Secrets and variables > Actions) before the schedule fires.
 name: playwright-scraper (phase 2)
 
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: "*/30 * * * *" # every 30 min once Phase 2 is enabled
+  schedule:
+    - cron: "*/30 * * * *" # every 30 min
 
 jobs:
   scrape:

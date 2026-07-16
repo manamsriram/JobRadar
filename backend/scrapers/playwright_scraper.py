@@ -1,9 +1,10 @@
 """Headless-browser scrapers for JS-rendered pages (custom career sites, Levels.fyi).
 
-Phase 1: runs in-process inside the container (Chromium ships in the image).
-Phase 2: this module is invoked standalone by a GitHub Action (see the
-`__main__` block) which POSTs the resulting JSON to /api/ingest, so the always-on
-VM never has to hold a 300MB+ browser in RAM. Both paths call the same fetchers.
+Phase 2 split: this module never runs inside the always-on host container. It's
+invoked standalone by a GitHub Action (see the `__main__` block and
+.github/workflows/playwright_scraper.yml), which POSTs the resulting JSON to
+/api/ingest — the host VM never has to hold a 300MB+ browser in RAM, so it fits
+on a 1GB free-tier box.
 
 Every scrape sends a realistic User-Agent and jitters 1.5–3s to stay polite.
 """
@@ -107,10 +108,10 @@ async def fetch_levels() -> list[dict]:
     return jobs
 
 
-# ---- Phase 2 offload entrypoint (unused in Phase 1) ----
+# ---- GitHub Action entrypoint ----
 # Invoked by .github/workflows/playwright_scraper.yml:
 #   python -m scrapers.playwright_scraper --companies companies.json --output jobs.json
-# The workflow then POSTs jobs.json to /api/ingest. Not called by the running app.
+# The workflow then POSTs jobs.json to /api/ingest. Never called by the host app.
 async def _run(companies_path: str | None, output_path: str) -> None:
     all_jobs: list[dict] = await fetch_levels()
     if companies_path:

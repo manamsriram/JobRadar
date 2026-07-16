@@ -68,10 +68,10 @@ async def stream_jobs():
     )
 
 
-# ---- Phase 2 (unused in Phase 1) ----
-# When Playwright is offloaded to a GitHub Action, the action POSTs scraped jobs
-# here so the always-on VM never runs a browser. Not called while poll_loop scrapes
-# in-process. Auth via the INGEST_TOKEN shared secret.
+# ---- Phase 2 ingest endpoint ----
+# The playwright_scraper.yml GitHub Action runs Chromium off-box and POSTs
+# scraped jobs here, so this host never has to hold a browser in RAM.
+# Auth via the INGEST_TOKEN shared secret.
 @app.post("/api/ingest")
 async def ingest(request: Request, x_ingest_token: str = Header(default="")):
     token = os.getenv("INGEST_TOKEN")

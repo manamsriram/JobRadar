@@ -1,9 +1,14 @@
 """Orchestrator: drives every source, filters, enriches, alerts, persists.
 
 poll_loop runs continuously (every POLL_INTERVAL_SECONDS): niche boards (YC /
-TLDR / Levels), custom company career pages, and any careers pages discovered
-from the funding queue. funding_loop runs hourly, watching TechCrunch for newly
-funded startups and discovering their careers pages.
+TLDR), plain (non-JS) custom company career pages, and any careers pages
+discovered from the funding queue. funding_loop runs hourly, watching
+TechCrunch for newly funded startups and discovering their careers pages.
+
+Phase 2 split: this process never launches a browser. JS-rendered sources
+(Levels.fyi, `requires_js` company pages) are scraped by a separate GitHub
+Action running scrapers/playwright_scraper.py, which POSTs results to
+/api/ingest — see .github/workflows/playwright_scraper.yml.
 
 Matched jobs are enriched (tier-1 only), pushed to the live SSE feed, emailed,
 and persisted to /data. Every source failure is caught and logged so one bad
@@ -22,7 +27,6 @@ from config import FUNDING_CHECK_INTERVAL, POLL_INTERVAL_SECONDS, PURGE_AFTER_DA
 from enricher import find_contacts
 from filter import matches
 from notifier import send_email_alert
-from scrapers.playwright_scraper import fetch_custom_js, fetch_levels
 from scrapers.tldr_scraper import fetch_tldr
 from scrapers.yc_scraper import fetch_yc
 from signals.careers_discovery import discover_careers_url
@@ -92,7 +96,9 @@ async def _scrape_company(company: dict) -> list[dict]:
     if not url:
         return []
     if company.get("requires_js"):
-        return await fetch_custom_js(name, url)
+        # Phase 2: JS-rendered pages are scraped off-box by the GitHub Action
+        # (scrapers/playwright_scraper.py) and arrive via /api/ingest instead.
+        return []
     return await _fetch_plain(name, url)
 
 
@@ -101,7 +107,6 @@ async def _gather_sources(companies: list[dict]) -> list[dict]:
     jobs: list[dict] = []
     jobs += await fetch_yc()
     jobs += await fetch_tldr()
-    jobs += await fetch_levels()
     for company in companies:
         jobs += await _scrape_company(company)
     return jobs

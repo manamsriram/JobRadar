@@ -1,6 +1,8 @@
-# Multi-stage: Node builds the React frontend, the Python image runs everything
-# (FastAPI + scraper loop + Playwright/Chromium). 12 GB RAM on the Oracle ARM VM
-# makes running Chromium in-container viable for Phase 1.
+# Multi-stage: Node builds the React frontend, the Python image runs the API +
+# scraper loop. Phase 2 split: Chromium/Playwright never runs on this host —
+# JS-rendered scraping happens in a GitHub Action (scrapers/playwright_scraper.py)
+# which POSTs results to /api/ingest. That's why no apt-get Chromium libs or
+# `playwright install` here: this image fits comfortably on a 1GB free-tier VM.
 
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
@@ -12,19 +14,8 @@ RUN npm run build
 FROM python:3.12-slim
 WORKDIR /app
 
-# System libs required by headless Chromium.
-# Phase 2: if Playwright is offloaded to GitHub Actions, this apt-get block and
-# the `playwright install` line below can be removed to free ~500 MB on the VM.
-RUN apt-get update && apt-get install -y \
-    libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
-    libgbm1 libasound2 libxshmfence1 --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Phase 1: Chromium ships inside the image. Phase 2: remove this line.
-RUN playwright install chromium --with-deps
 
 COPY backend/ .
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
