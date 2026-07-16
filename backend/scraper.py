@@ -1,33 +1,41 @@
+"""Orchestrator: drives every source, filters, enriches, alerts, persists.
+
+poll_loop runs continuously (every POLL_INTERVAL_SECONDS): niche boards (YC /
+TLDR / Levels), custom company career pages, and any careers pages discovered
+from the funding queue. funding_loop runs hourly, watching TechCrunch for newly
+funded startups and discovering their careers pages.
+
+Matched jobs are enriched (tier-1 only), pushed to the live SSE feed, emailed,
+and persisted to /data. Every source failure is caught and logged so one bad
+page never kills a cycle.
+"""
 import asyncio
-import logging
 import random
 from datetime import datetime, timezone
 
+import httpx
+from bs4 import BeautifulSoup
+
 import state
-from config import (
-    COMPANIES, DIGEST_INTERVAL_HOURS, DIGEST_MAX_JOBS,
-    POLL_INTERVAL_SECONDS, PURGE_AFTER_DAYS,
-)
+from config import FUNDING_CHECK_INTERVAL, POLL_INTERVAL_SECONDS, PURGE_AFTER_DAYS
 from enricher import find_contacts
 from filter import matches
-from notifier import send_digest
-from scrapers.ashby import fetch_ashby
-from scrapers.greenhouse import fetch_greenhouse
-from scrapers.lever import fetch_lever
-from scrapers.playwright_scraper import fetch_custom
+from notifier import send_email_alert
+from scrapers.playwright_scraper import fetch_custom_js, fetch_levels
+from scrapers.tldr_scraper import fetch_tldr
+from scrapers.yc_scraper import fetch_yc
+from signals.careers_discovery import discover_careers_url
+from signals.funding_watcher import check_funding, resolve_domain_from_article
 
-log = logging.getLogger(__name__)
+_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
 # Live feed for the SSE endpoint. Bounded + drop-oldest so an idle (no client)
-# server can't leak memory (F7). History is served separately via GET /api/jobs.
+# server can't leak memory. History is served separately via GET /api/jobs.
+# ponytail: single-consumer SSE; use pub/sub fan-out if multi-client needed.
 new_jobs_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
-
-ATS_FETCHERS = {
-    "greenhouse": fetch_greenhouse,
-    "lever": fetch_lever,
-    "ashby": fetch_ashby,
-    "custom": fetch_custom,
-}
 
 
 def _now() -> str:
@@ -45,75 +53,133 @@ def _push_live(job: dict) -> None:
             pass
 
 
-async def scrape_company(company: dict) -> list[dict]:
-    ats = company["ats"]
-    fetcher = ATS_FETCHERS[ats]
+async def _fetch_plain(company: str, url: str) -> list[dict]:
+    """Scrape a server-rendered career page with httpx + BS4 (no browser)."""
+    await asyncio.sleep(random.uniform(1.5, 3.0))
     try:
-        if ats == "custom":
-            jobs = await fetcher(company["name"], company["url"])
-        else:
-            jobs = await fetcher(company["slug"])
-    except Exception as e:  # one bad company must not kill the cycle
-        log.warning("Scrape error on %s: %s", company["name"], e)
+        async with httpx.AsyncClient(headers={"User-Agent": _UA}) as client:
+            r = await client.get(url, timeout=15, follow_redirects=True)
+            r.raise_for_status()
+    except httpx.HTTPError as e:
+        print(f"[scraper] error fetching {company} ({url}): {e}")
         return []
-
-    for job in jobs:
-        job["company"] = company["name"]
-        job["ats"] = ats
-        if not job.get("posted_at"):
-            job["posted_at"] = _now()
+    soup = BeautifulSoup(r.text, "html.parser")
+    # Broken selector? Most plain career pages link roles via /jobs//careers/
+    # anchors. If empty for a real company, add a per-company selector override.
+    anchors = soup.select("a[href*='/job'], a[href*='/career'], a[href*='/position']")
+    jobs, seen_hrefs = [], set()
+    import hashlib
+    for a in anchors:
+        href = a.get("href", "")
+        title = a.get_text(strip=True)
+        if not title or len(title) < 5 or href in seen_hrefs:
+            continue
+        seen_hrefs.add(href)
+        full = href if href.startswith("http") else url.rstrip("/") + "/" + href.lstrip("/")
+        uid = hashlib.md5(full.encode()).hexdigest()[:12]
+        jobs.append({
+            "id": f"custom_{company.lower()}_{uid}",
+            "title": title, "company": company, "location": "See listing",
+            "url": full, "source": "custom", "posted_at": None, "description": "",
+        })
     return jobs
 
 
-async def poll_loop(companies: list[dict] = COMPANIES) -> None:
+async def _scrape_company(company: dict) -> list[dict]:
+    name = company.get("name", "Unknown")
+    url = company.get("careers_url")
+    if not url:
+        return []
+    if company.get("requires_js"):
+        return await fetch_custom_js(name, url)
+    return await _fetch_plain(name, url)
+
+
+async def _gather_sources(companies: list[dict]) -> list[dict]:
+    """Run every source; concatenate results. Each source guards its own errors."""
+    jobs: list[dict] = []
+    jobs += await fetch_yc()
+    jobs += await fetch_tldr()
+    jobs += await fetch_levels()
+    for company in companies:
+        jobs += await _scrape_company(company)
+    return jobs
+
+
+async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mode: bool) -> None:
+    by_name = {c.get("name", "").lower(): c for c in companies}
+    contacts_cache: dict[str, list] = {}  # per-cycle, per-domain
+    for job in state.get_new_jobs(seen, jobs):
+        job["scraped_at"] = _now()
+        if not job.get("posted_at"):
+            job["posted_at"] = job["scraped_at"]
+        job["matched"] = matches(job)
+
+        if job["matched"]:
+            company = by_name.get(job.get("company", "").lower())
+            domain = company.get("domain") if company else None
+            if company and company.get("tier") == 1 and domain:
+                if domain not in contacts_cache:
+                    contacts_cache[domain] = await find_contacts(domain)
+                job["contacts"] = contacts_cache[domain]
+            if not seed_mode:
+                _push_live(job)
+                await send_email_alert(job)
+        seen[job["id"]] = job
+
+
+async def poll_loop() -> None:
     while True:
         try:
-            try:
-                await state.purge_old(days=PURGE_AFTER_DAYS)
-            except Exception as e:  # e.g. `applied` column not migrated yet
-                log.warning("Purge skipped: %s", e)
-            seed_mode = await state.is_empty()  # F2: silent-seed the first ever run
-            seen = await state.load_seen()
-            contacts_cache: dict[str, list] = {}  # per-cycle, per-domain (F6)
+            seen = state.load_seen()
+            seed_mode = not seen  # first ever run: persist silently, don't email
+            seen = state.purge_old(seen, days=PURGE_AFTER_DAYS)
+            companies = state.load_companies()
 
-            for company in companies:
-                fetched = await scrape_company(company)
-                for job in state.get_new_jobs(seen, fetched):
-                    job["scraped_at"] = _now()
-                    job["matched"] = matches(job)
-                    job["notified"] = False
+            jobs = await _gather_sources(companies)
+            await _process(jobs, seen, companies, seed_mode)
 
-                    if job["matched"]:
-                        domain = company.get("domain")
-                        if company.get("tier") == 1 and domain:
-                            if domain not in contacts_cache:
-                                contacts_cache[domain] = await find_contacts(domain)
-                            job["contacts"] = contacts_cache[domain]
-                        if seed_mode:
-                            job["notified"] = True  # seed silently, don't email
-                        else:
-                            _push_live(job)
+            # Discovered careers pages from funding signals
+            for entry in state.load_funding_queue():
+                url = entry.get("careers_url")
+                if not url:
+                    continue
+                found = await _scrape_company({"name": entry.get("company", "Funded"),
+                                               "careers_url": url})
+                for j in found:
+                    j["source"] = "funding"
+                await _process(found, seen, companies, seed_mode)
 
-                    seen[job["id"]] = job
-                    if job["matched"]:
-                        await state.upsert_job(job)  # F3: persist matched only
-
-                await asyncio.sleep(random.uniform(1.5, 3.0))  # polite delay
-
-            log.info("Poll cycle complete. Sleeping %ds.", POLL_INTERVAL_SECONDS)
+            state.save_seen(seen)
+            print(f"[scraper] poll cycle complete ({len(seen)} known). Sleep {POLL_INTERVAL_SECONDS}s.")
         except Exception as e:
-            log.error("Poll loop cycle failed: %s", e)
+            print(f"[scraper] poll loop cycle failed: {e}")
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 
-async def digest_loop() -> None:
-    interval = DIGEST_INTERVAL_HOURS * 3600
+async def funding_loop() -> None:
     while True:
-        await asyncio.sleep(interval)  # sleep first — avoids a burst on each restart
+        await asyncio.sleep(FUNDING_CHECK_INTERVAL)  # sleep first — no burst on restart
         try:
-            jobs = await state.get_matched_unnotified(DIGEST_MAX_JOBS)
-            if await send_digest(jobs):
-                await state.mark_notified([j["id"] for j in jobs])
-                log.info("Digest sent for %d job(s).", len(jobs))
+            new_entries = await check_funding()
+            # Resolve a careers URL for each new signal so poll_loop can scrape it.
+            if new_entries:
+                queue = state.load_funding_queue()
+                for entry in queue:
+                    if entry.get("careers_url"):
+                        continue
+                    # Real domain from the article's outbound link; the headline
+                    # guess ("<company>.com") is only a fallback.
+                    domain = None
+                    if entry.get("article_url"):
+                        domain = await resolve_domain_from_article(
+                            entry["article_url"], entry.get("company")
+                        )
+                    domain = domain or entry.get("domain")
+                    if not domain:
+                        continue
+                    entry["domain"] = domain
+                    entry["careers_url"] = await discover_careers_url(domain)
+                state.save_funding_queue(queue)
         except Exception as e:
-            log.error("Digest loop failed: %s", e)
+            print(f"[scraper] funding loop failed: {e}")

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Apple",
+    "source": "custom",
+    "careers_url": "https://jobs.apple.com/en-us/search?team=software-and-services-SWDV",
+    "domain": "apple.com",
+    "tier": 1,
+    "requires_js": true
+  },
+  {
+    "name": "Waymo",
+    "source": "custom",
+    "careers_url": "https://waymo.com/careers/",
+    "domain": "waymo.com",
+    "tier": 1,
+    "requires_js": true
+  },
+  {
+    "name": "Plaid",
+    "source": "custom",
+    "careers_url": "https://plaid.com/careers/openings/",
+    "domain": "plaid.com",
+    "tier": 2,
+    "requires_js": false
+  }
+]

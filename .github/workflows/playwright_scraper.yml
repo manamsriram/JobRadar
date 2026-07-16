@@ -1,0 +1,37 @@
+# Phase 2 ONLY — disabled by default.
+#
+# When the VM can no longer spare RAM for Chromium, this Action runs the
+# Playwright scrapers off-box and POSTs results to /api/ingest, so the always-on
+# container never holds a browser. Enable by uncommenting the `schedule` trigger
+# and setting the INGEST_URL / INGEST_TOKEN repository secrets.
+name: playwright-scraper (phase 2)
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: "*/30 * * * *" # every 30 min once Phase 2 is enabled
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps + Chromium
+        run: |
+          pip install -r backend/requirements.txt
+          playwright install chromium --with-deps
+      - name: Scrape
+        working-directory: backend
+        run: python -m scrapers.playwright_scraper --companies ../data/companies.json --output jobs.json
+      - name: POST to /api/ingest
+        env:
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+        run: |
+          curl -sf -X POST "$INGEST_URL/api/ingest" \
+            -H "X-Ingest-Token: $INGEST_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @backend/jobs.json

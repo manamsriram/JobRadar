@@ -1,71 +1,55 @@
 from dotenv import load_dotenv
 
-load_dotenv()  # populate env before modules read it (F5)
+load_dotenv()  # populate env before other modules read it
 
 import asyncio
 import json
-import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import state
-from config import COMPANIES
-from scraper import digest_loop, new_jobs_queue, poll_loop
-
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
+from filter import matches
+from scraper import funding_loop, new_jobs_queue, poll_loop
 
 FRONTEND_DIST = "frontend/dist"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not (os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_KEY")):
-        log.warning("SUPABASE_URL/SUPABASE_SERVICE_KEY unset — scraper will error.")
     tasks = [
-        asyncio.create_task(poll_loop(COMPANIES)),
-        asyncio.create_task(digest_loop()),
+        asyncio.create_task(poll_loop()),
+        asyncio.create_task(funding_loop()),
     ]
-    yield
-    for t in tasks:
-        t.cancel()
+    try:
+        yield
+    finally:
+        for t in tasks:
+            t.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
-
-# Frontend is served from GitHub Pages (separate origin); allow it to call the API.
-# ALLOWED_ORIGINS is comma-separated; defaults to the Pages origin.
-_origins = os.getenv(
-    "ALLOWED_ORIGINS", "https://manamsriram.github.io"
-).split(",")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in _origins if o.strip()],
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
+# No CORS: the React build is served same-origin from this app (StaticFiles below).
 
 
-@app.api_route("/healthz", methods=["GET", "HEAD"])
-async def healthz():
-    # Cheap liveness endpoint for UptimeRobot keep-alive (HEAD by default; no DB hit).
-    return {"ok": True}
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
 
 
 @app.get("/api/jobs")
 async def get_jobs():
-    return JSONResponse(await state.get_matched())
+    return JSONResponse(state.get_matched(state.load_seen()))
 
 
 @app.post("/api/jobs/{job_id}/apply")
 async def apply_job(job_id: str):
-    # Mark a job applied so the purge/cron preserves it past the 3-day window.
-    await state.mark_applied(job_id)
+    # Mark applied so purge_old preserves the job past the 3-day window.
+    if not state.mark_applied(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
     return {"ok": True}
 
 
@@ -81,6 +65,26 @@ async def stream_jobs():
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ---- Phase 2 (unused in Phase 1) ----
+# When Playwright is offloaded to a GitHub Action, the action POSTs scraped jobs
+# here so the always-on VM never runs a browser. Not called while poll_loop scrapes
+# in-process. Auth via the INGEST_TOKEN shared secret.
+@app.post("/api/ingest")
+async def ingest(request: Request, x_ingest_token: str = Header(default="")):
+    token = os.getenv("INGEST_TOKEN")
+    if not token or x_ingest_token != token:
+        raise HTTPException(status_code=401, detail="invalid ingest token")
+    incoming = await request.json()
+    seen = state.load_seen()
+    added = 0
+    for job in state.get_new_jobs(seen, incoming):
+        job["matched"] = matches(job)
+        seen[job["id"]] = job
+        added += 1
+    state.save_seen(seen)
+    return {"ingested": added}
 
 
 # Serve the built React frontend (only if present — absent during backend-only dev).

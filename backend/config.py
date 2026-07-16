@@ -1,6 +1,4 @@
-import json
 import os
-import pathlib
 
 # ---- Role filters ----
 ROLE_FILTERS = {
@@ -23,7 +21,7 @@ ROLE_FILTERS = {
     # in filter.py: allowed only with a US signal or no non-US marker.
     "locations": [
         "san jose", "san francisco", "sf", "bay area", "mountain view",
-        "sunnyvale", "palo alto", "menlo park",
+        "sunnyvale", "palo alto", "menlo park", "milpitas", "santa clara",
         "seattle", "new york", "nyc", "chicago", "austin", "boston",
         "los angeles", "denver", "atlanta", "washington, dc", "washington dc",
         # "us" alone matched Austin/Houston/etc — use anchored forms instead
@@ -54,19 +52,9 @@ ROLE_FILTERS = {
 
 # ---- Tuning (env-overridable) ----
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))
-PURGE_AFTER_DAYS = int(os.getenv("PURGE_AFTER_DAYS", "14"))
+# TechCrunch funding RSS is polled hourly — new funding rarely lands faster.
+FUNDING_CHECK_INTERVAL = int(os.getenv("FUNDING_CHECK_INTERVAL", "3600"))
+PURGE_AFTER_DAYS = int(os.getenv("PURGE_AFTER_DAYS", "3"))
 # Only surface jobs posted within this many days (calendar-day granularity).
-# 3 days yielded ~0 matches on these ATS boards; 14 balances freshness vs. volume.
+# Niche boards post fresh roles; 14 balances freshness vs. volume.
 MAX_POSTED_AGE_DAYS = int(os.getenv("MAX_POSTED_AGE_DAYS", "14"))
-DIGEST_INTERVAL_HOURS = float(os.getenv("DIGEST_INTERVAL_HOURS", "4"))
-DIGEST_MAX_JOBS = int(os.getenv("DIGEST_MAX_JOBS", "5"))
-
-# ---- Companies ----
-COMPANIES_FILE = pathlib.Path(__file__).parent / "companies.json"
-
-
-def load_companies() -> list[dict]:
-    return json.loads(COMPANIES_FILE.read_text())
-
-
-COMPANIES = load_companies()

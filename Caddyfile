@@ -1,0 +1,5 @@
+# Replace yourdomain.com with your real domain for automatic HTTPS.
+# For HTTP-only dev against the raw Oracle VM IP, use `:80 { reverse_proxy jobradar:8000 }`.
+yourdomain.com {
+    reverse_proxy jobradar:8000
+}

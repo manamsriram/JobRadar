@@ -1,19 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSSE } from "./hooks/useSSE";
+import { useSSE, type Job } from "./hooks/useSSE";
 import JobTable from "./components/JobTable";
 import FilterBar from "./components/FilterBar";
 import LiveBadge from "./components/LiveBadge";
-import type { Job } from "./types";
-import { API_BASE } from "./api";
 
+// Same-origin in prod (static build); Vite proxies /api to :8000 in dev.
 export default function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [filters, setFilters] = useState({ title: "", location: "" });
-  const liveJobs = useSSE(`${API_BASE}/api/stream`);
+  const [filters, setFilters] = useState({ title: "", location: "", source: "" });
+  const liveJobs = useSSE("/api/stream");
 
-  // Initial job list on mount.
   useEffect(() => {
-    fetch(`${API_BASE}/api/jobs`)
+    fetch("/api/jobs")
       .then((r) => r.json())
       .then(setJobs)
       .catch(() => setJobs([]));
@@ -31,7 +29,8 @@ export default function App() {
   const filtered = merged.filter((j) => {
     const t = j.title.toLowerCase().includes(filters.title.toLowerCase());
     const l = j.location.toLowerCase().includes(filters.location.toLowerCase());
-    return t && l;
+    const s = !filters.source || j.source === filters.source;
+    return t && l && s;
   });
 
   return (
