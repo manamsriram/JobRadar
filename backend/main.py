@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -77,9 +78,17 @@ async def ingest(request: Request, x_ingest_token: str = Header(default="")):
     if not token or x_ingest_token != token:
         raise HTTPException(status_code=401, detail="invalid ingest token")
     incoming = await request.json()
+    if not isinstance(incoming, list) or not all(
+        isinstance(j, dict) and isinstance(j.get("id"), str) for j in incoming
+    ):
+        raise HTTPException(status_code=400, detail="expected a list of job objects with string ids")
     seen = state.load_seen()
     added = 0
+    now = datetime.now(timezone.utc).isoformat()
     for job in state.get_new_jobs(seen, incoming):
+        job["scraped_at"] = now
+        if not job.get("posted_at"):
+            job["posted_at"] = job["scraped_at"]
         job["matched"] = matches(job)
         seen[job["id"]] = job
         added += 1

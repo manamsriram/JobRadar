@@ -17,6 +17,7 @@ from bs4 import BeautifulSoup
 from defusedxml import ElementTree
 
 import state
+from net_safety import is_safe_url
 
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -63,6 +64,8 @@ def _host(url: str) -> str | None:
     if not host or "." not in host:
         return None
     if any(host == s or host.endswith("." + s) for s in _SKIP_HOSTS):
+        return None
+    if not is_safe_url(f"https://{host}"):
         return None
     return host
 

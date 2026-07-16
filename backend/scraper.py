@@ -12,6 +12,7 @@ page never kills a cycle.
 import asyncio
 import random
 from datetime import datetime, timezone
+from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
@@ -75,7 +76,7 @@ async def _fetch_plain(company: str, url: str) -> list[dict]:
         if not title or len(title) < 5 or href in seen_hrefs:
             continue
         seen_hrefs.add(href)
-        full = href if href.startswith("http") else url.rstrip("/") + "/" + href.lstrip("/")
+        full = urljoin(url, href)
         uid = hashlib.md5(full.encode()).hexdigest()[:12]
         jobs.append({
             "id": f"custom_{company.lower()}_{uid}",
@@ -150,6 +151,12 @@ async def poll_loop() -> None:
                     j["source"] = "funding"
                 await _process(found, seen, companies, seed_mode)
 
+            # Merge in any applied-flags set by concurrent /api/jobs/{id}/apply
+            # calls during this cycle, so this save doesn't clobber them.
+            current = state.load_seen()
+            for jid, job in current.items():
+                if job.get("applied") and jid in seen:
+                    seen[jid]["applied"] = True
             state.save_seen(seen)
             print(f"[scraper] poll cycle complete ({len(seen)} known). Sleep {POLL_INTERVAL_SECONDS}s.")
         except Exception as e:
@@ -161,25 +168,25 @@ async def funding_loop() -> None:
     while True:
         await asyncio.sleep(FUNDING_CHECK_INTERVAL)  # sleep first — no burst on restart
         try:
-            new_entries = await check_funding()
-            # Resolve a careers URL for each new signal so poll_loop can scrape it.
-            if new_entries:
-                queue = state.load_funding_queue()
-                for entry in queue:
-                    if entry.get("careers_url"):
-                        continue
-                    # Real domain from the article's outbound link; the headline
-                    # guess ("<company>.com") is only a fallback.
-                    domain = None
-                    if entry.get("article_url"):
-                        domain = await resolve_domain_from_article(
-                            entry["article_url"], entry.get("company")
-                        )
-                    domain = domain or entry.get("domain")
-                    if not domain:
-                        continue
-                    entry["domain"] = domain
-                    entry["careers_url"] = await discover_careers_url(domain)
-                state.save_funding_queue(queue)
+            await check_funding()
+            # Resolve a careers URL for every unresolved entry (new this cycle or
+            # left over from a prior failed resolution) so poll_loop can scrape it.
+            queue = state.load_funding_queue()
+            for entry in queue:
+                if entry.get("careers_url"):
+                    continue
+                # Real domain from the article's outbound link; the headline
+                # guess ("<company>.com") is only a fallback.
+                domain = None
+                if entry.get("article_url"):
+                    domain = await resolve_domain_from_article(
+                        entry["article_url"], entry.get("company")
+                    )
+                domain = domain or entry.get("domain")
+                if not domain:
+                    continue
+                entry["domain"] = domain
+                entry["careers_url"] = await discover_careers_url(domain)
+            state.save_funding_queue(queue)
         except Exception as e:
             print(f"[scraper] funding loop failed: {e}")

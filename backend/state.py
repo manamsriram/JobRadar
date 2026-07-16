@@ -21,12 +21,11 @@ SEEN_FUNDING_FILE = DATA_DIR / "seen_funding.json"
 
 
 def _read_json(path: pathlib.Path, default):
+    """Missing file -> default (genuine first run). Corrupt/unreadable file ->
+    raise, so callers don't silently treat a broken state store as empty."""
     try:
         return json.loads(path.read_text())
     except FileNotFoundError:
-        return default
-    except (json.JSONDecodeError, OSError) as e:
-        print(f"[state] error reading {path.name}: {e}")
         return default
 
 

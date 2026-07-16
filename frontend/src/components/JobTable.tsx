@@ -15,12 +15,19 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
   const [applied, setApplied] = useState<Set<string>>(new Set());
 
   // Optimistically flag applied, then persist so purge/cron keeps the job.
+  // Roll back on failure so the UI doesn't show "applied" for something the
+  // server never recorded.
   async function markApplied(id: string) {
     setApplied((prev) => new Set(prev).add(id));
     try {
-      await fetch(`/api/jobs/${id}/apply`, { method: "POST" });
+      const res = await fetch(`/api/jobs/${id}/apply`, { method: "POST" });
+      if (!res.ok) throw new Error(`apply failed: ${res.status}`);
     } catch {
-      // optimistic — a failed call just won't preserve the job past 3 days
+      setApplied((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   }
 
