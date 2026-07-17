@@ -56,7 +56,7 @@ async def fetch_custom_js(company: str, url: str) -> list[dict]:
             "id": _uid(f"custom_{company.lower()}", link["href"]),
             "title": link["title"],
             "company": company,
-            "location": "See listing",
+            "location": "",
             "url": link["href"],
             "source": "custom",
             "posted_at": None,  # falls back to scraped_at in the orchestrator
@@ -99,7 +99,7 @@ async def fetch_levels() -> list[dict]:
             "id": _uid("levels", r["href"]),
             "title": r["title"],
             "company": r["company"] or "Unknown",
-            "location": r["location"] or "See listing",
+            "location": r["location"],
             "url": r["href"],
             "source": "levels",
             "posted_at": None,

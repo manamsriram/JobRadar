@@ -50,7 +50,7 @@ async def fetch_yc() -> list[dict]:
             "id": f"yc_{uid}",
             "title": title,
             "company": company,
-            "location": "See listing",
+            "location": "",
             "url": url,
             "source": "yc",
             "posted_at": None,
