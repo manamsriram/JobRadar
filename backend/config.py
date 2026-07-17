@@ -61,6 +61,9 @@ MAX_YEARS_EXPERIENCE = int(os.getenv("MAX_YEARS_EXPERIENCE", "2"))
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))
 # TechCrunch funding RSS is polled hourly — new funding rarely lands faster.
 FUNDING_CHECK_INTERVAL = int(os.getenv("FUNDING_CHECK_INTERVAL", "3600"))
+# Email digest cadence — batches matches instead of one email per job.
+ALERT_INTERVAL_SECONDS = int(os.getenv("ALERT_INTERVAL_SECONDS", str(4 * 3600)))
+ALERT_DIGEST_SIZE = int(os.getenv("ALERT_DIGEST_SIZE", "5"))
 PURGE_AFTER_DAYS = int(os.getenv("PURGE_AFTER_DAYS", "3"))
 # Only surface jobs posted within this many days (calendar-day granularity).
 # Niche boards post fresh roles; 14 balances freshness vs. volume.

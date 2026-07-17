@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 import state
 from filter import matches
-from scraper import funding_loop, new_jobs_queue, poll_loop
+from scraper import digest_loop, funding_loop, new_jobs_queue, poll_loop
 
 FRONTEND_DIST = "frontend/dist"
 
@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(poll_loop()),
         asyncio.create_task(funding_loop()),
+        asyncio.create_task(digest_loop()),
     ]
     try:
         yield

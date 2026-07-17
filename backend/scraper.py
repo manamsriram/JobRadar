@@ -23,10 +23,16 @@ import httpx
 from bs4 import BeautifulSoup
 
 import state
-from config import FUNDING_CHECK_INTERVAL, POLL_INTERVAL_SECONDS, PURGE_AFTER_DAYS
+from config import (
+    ALERT_DIGEST_SIZE,
+    ALERT_INTERVAL_SECONDS,
+    FUNDING_CHECK_INTERVAL,
+    POLL_INTERVAL_SECONDS,
+    PURGE_AFTER_DAYS,
+)
 from enricher import find_contacts
 from filter import matches
-from notifier import send_email_alert
+from notifier import send_digest_alert
 from scrapers.yc_scraper import fetch_yc
 from signals.careers_discovery import discover_careers_url
 from signals.funding_watcher import check_funding, resolve_domain_from_article
@@ -40,6 +46,10 @@ _UA = (
 # server can't leak memory. History is served separately via GET /api/jobs.
 # ponytail: single-consumer SSE; use pub/sub fan-out if multi-client needed.
 new_jobs_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+
+# Matched jobs awaiting the next digest email. digest_loop drains this.
+# ponytail: single-process in-memory list; fine since scraper runs as one process.
+_pending_alerts: list[dict] = []
 
 
 def _now() -> str:
@@ -164,7 +174,7 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
                 job["contacts"] = contacts_cache[domain]
             if not seed_mode:
                 _push_live(job)
-                await send_email_alert(job)
+                _pending_alerts.append(job)
         seen[job["id"]] = job
 
 
@@ -205,6 +215,16 @@ async def poll_loop() -> None:
         except Exception as e:
             print(f"[scraper] poll loop cycle failed: {e}")
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+
+async def digest_loop() -> None:
+    while True:
+        await asyncio.sleep(ALERT_INTERVAL_SECONDS)
+        batch, _pending_alerts[:] = _pending_alerts[-ALERT_DIGEST_SIZE:], []
+        try:
+            await send_digest_alert(batch)
+        except Exception as e:
+            print(f"[scraper] digest loop failed: {e}")
 
 
 async def funding_loop() -> None:

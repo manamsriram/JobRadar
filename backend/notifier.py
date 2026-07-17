@@ -1,9 +1,7 @@
-"""Gmail SMTP alerts — one email per matched job (design doc §6).
+"""Gmail SMTP alerts — one digest email per alert cycle (design doc §6).
 
-Tight new-grad filters keep volume low, so per-job alerts stay manageable and
-each email is actionable on its own (no digest batching). Degrades gracefully
-(logs + returns False) when Gmail credentials are unset. Use a Gmail App Password
-(requires 2FA), not the account login password.
+Degrades gracefully (logs + returns False) when Gmail credentials are unset.
+Use a Gmail App Password (requires 2FA), not the account login password.
 """
 import os
 from email.message import EmailMessage
@@ -37,8 +35,10 @@ def _format_body(job: dict) -> str:
     return "\n".join(lines)
 
 
-async def send_email_alert(job: dict) -> bool:
-    """Email a single matched job. Returns True if sent, False if skipped."""
+async def send_digest_alert(jobs: list[dict]) -> bool:
+    """Email a digest of the given (already-limited) job list. Returns True if sent."""
+    if not jobs:
+        return False
     user = os.getenv("GMAIL_USER")
     password = os.getenv("GMAIL_APP_PASSWORD")
     alert_to = os.getenv("ALERT_TO") or user
@@ -47,10 +47,10 @@ async def send_email_alert(job: dict) -> bool:
         return False
 
     msg = EmailMessage()
-    msg["Subject"] = f"🚨 JobRadar: {job.get('title', 'New role')} @ {job.get('company', '')}"
+    msg["Subject"] = f"🚨 JobRadar: {len(jobs)} new match{'es' if len(jobs) != 1 else ''}"
     msg["From"] = user
     msg["To"] = alert_to
-    msg.set_content(_format_body(job))
+    msg.set_content("\n\n".join(_format_body(job) for job in jobs))
 
     try:
         await aiosmtplib.send(
