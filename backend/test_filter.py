@@ -52,6 +52,27 @@ def test_desc_exclude_drops_senior_body():
     assert not matches(_job(description="Requires 8+ years of experience."))
 
 
+def test_hard_cap_years_rejected():
+    assert not matches(_job(description="Requires 2 years of experience."))
+    assert not matches(_job(description="2+ years of experience required."))
+    assert not matches(_job(title="Software Engineer, 2 years experience"))
+
+
+def test_range_under_cap_accepted():
+    assert matches(_job(description="0-2 years of experience preferred."))
+    assert matches(_job(description="1-2 years of experience preferred."))
+    assert matches(_job(description="1 year of experience preferred."))
+
+
+def test_degree_plus_years_rejected():
+    assert not matches(_job(description="Master's degree and 2 years experience required."))
+    assert not matches(_job(description="PhD with 1 year of experience."))
+
+
+def test_degree_alone_without_years_accepted():
+    assert matches(_job(description="Master's degree required."))
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -71,5 +71,12 @@ PURGE_AFTER_DAYS = int(os.getenv("PURGE_AFTER_DAYS", "3"))
 # poll interval.
 CYCLE_RETRY_BUDGET = int(os.getenv("CYCLE_RETRY_BUDGET", "20"))
 # Only surface jobs posted within this many days (calendar-day granularity).
-# Niche boards post fresh roles; 14 balances freshness vs. volume.
-MAX_POSTED_AGE_DAYS = int(os.getenv("MAX_POSTED_AGE_DAYS", "14"))
+MAX_POSTED_AGE_DAYS = int(os.getenv("MAX_POSTED_AGE_DAYS", "7"))
+
+# Degree requirements that, combined with any years-of-experience mention,
+# push the effective bar above what a 0-2 YOE candidate can meet (e.g. "MS +
+# 2 years") even though the number alone would pass MAX_YEARS_EXPERIENCE.
+DEGREE_PLUS_EXPERIENCE_EXCLUDE = [
+    "master's degree", "masters degree", "master's in", "masters in",
+    "ms degree", "m.s. degree", "phd", "ph.d.", "doctorate",
+]

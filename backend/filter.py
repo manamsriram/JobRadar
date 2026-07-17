@@ -1,17 +1,35 @@
 import re
 from datetime import datetime, timedelta, timezone
 
-from config import MAX_POSTED_AGE_DAYS, MAX_YEARS_EXPERIENCE, ROLE_FILTERS
+from config import (
+    DEGREE_PLUS_EXPERIENCE_EXCLUDE,
+    MAX_POSTED_AGE_DAYS,
+    MAX_YEARS_EXPERIENCE,
+    ROLE_FILTERS,
+)
+
+_YEARS_RE = re.compile(r"(\d+)\s*\+?\s*(?:-|to)?\s*(\d+)?\s*\+?\s*years?")
 
 
 def _max_years_required(text: str) -> int:
     """Highest year-count mentioned in text (0 if none found)."""
     years = []
-    for m in re.finditer(r"(\d+)\s*\+?\s*(?:-|to)?\s*(\d+)?\s*\+?\s*years?", text):
+    for m in _YEARS_RE.finditer(text):
         years.append(int(m.group(1)))
         if m.group(2):
             years.append(int(m.group(2)))
     return max(years, default=0)
+
+
+def _hard_cap_requirement(text: str) -> bool:
+    """True if text states a bare (non-range) requirement of exactly
+    MAX_YEARS_EXPERIENCE years — e.g. "2 years", "2+ years". A range whose
+    low end is under the cap ("0-2 years", "1-2 years") is still fine; only
+    a flat minimum sitting right at the cap should be rejected."""
+    for m in _YEARS_RE.finditer(text):
+        if m.group(2) is None and int(m.group(1)) >= MAX_YEARS_EXPERIENCE:
+            return True
+    return False
 
 
 def _too_old(posted_at: str | None) -> bool:
@@ -48,6 +66,11 @@ def matches(job: dict) -> bool:
     if _max_years_required(title) > MAX_YEARS_EXPERIENCE:
         return False
 
+    # Reject a bare "2 years"/"2+ years" minimum in the title — only a range
+    # starting below the cap ("0-2 years") counts as entry-level.
+    if _hard_cap_requirement(title):
+        return False
+
     # Location: US only. A positive US signal wins (US multi-city roles often
     # also list Toronto/Dublin). Otherwise plain remote/hybrid passes only when
     # no non-US marker is present ("Remote - Brussels", "Seoul (Hybrid)" fail).
@@ -71,8 +94,17 @@ def matches(job: dict) -> bool:
     if _max_years_required(description) > MAX_YEARS_EXPERIENCE:
         return False
 
-    # Drop roles requiring US citizenship / clearance and not offering sponsorship
+    if _hard_cap_requirement(description):
+        return False
+
+    # Drop roles pairing a graduate-degree requirement with any years-of-
+    # experience mention (e.g. "Master's degree + 2 years") — the combined
+    # bar exceeds what a 0-2 YOE candidate can meet even though "2 years"
+    # alone would pass.
     text = f"{title} {description}"
+    if any(kw in text for kw in DEGREE_PLUS_EXPERIENCE_EXCLUDE) and _max_years_required(text) > 0:
+        return False
+
     if any(kw in text for kw in ROLE_FILTERS["citizenship_exclude"]):
         if not any(kw in text for kw in ROLE_FILTERS["sponsorship_signals"]):
             return False
