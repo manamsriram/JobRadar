@@ -14,6 +14,7 @@ import hashlib
 import json
 import random
 
+from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
 _UA = (
@@ -66,41 +67,53 @@ async def fetch_custom_js(company: str, url: str) -> list[dict]:
 
 
 async def fetch_levels() -> list[dict]:
-    """Scrape the Levels.fyi job board (JS-rendered) for new-grad SWE roles."""
+    """Scrape the Levels.fyi job board (JS-rendered) for new-grad SWE roles.
+
+    Levels links each posting via a query string (/jobs?jobId=<id>), not a
+    path segment, and wraps title/company/location in CSS-module classes
+    with a build-hash prefix (e.g. "...__h_Bkua__companyJobTitle") that
+    changes across deploys — hence substring class matching below rather
+    than exact class names. Rendered HTML is parsed with BeautifulSoup
+    instead of in-page JS since the title span nests a "posted X ago" date
+    that needs stripping, which is fiddlier to do inside eval_on_selector_all.
+    """
     url = "https://www.levels.fyi/jobs?searchText=software%20engineer"
-    jobs: list[dict] = []
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(args=_LAUNCH_ARGS)
             page = await browser.new_page(user_agent=_UA)
             await page.goto(url, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(random.randint(1500, 3000))
-            # Broken selector? Levels renders each posting as an <a> into /jobs/<id>.
-            # If empty, inspect the board and update the anchor/title selector below.
-            rows = await page.eval_on_selector_all(
-                "a[href*='/jobs/']",
-                """els => els.map(e => ({
-                    title: e.querySelector('h3, [class*=title]')?.innerText.trim()
-                           || e.innerText.trim(),
-                    company: e.querySelector('[class*=company]')?.innerText.trim() || '',
-                    location: e.querySelector('[class*=location]')?.innerText.trim() || '',
-                    href: e.href
-                }))""",
-            )
+            html = await page.content()
             await browser.close()
     except Exception as e:
         print(f"[playwright_scraper] error scraping levels.fyi: {e}")
         return []
 
-    for r in rows:
-        if not r["title"] or len(r["title"]) < 5:
+    soup = BeautifulSoup(html, "html.parser")
+    jobs: list[dict] = []
+    for a in soup.select("a[href*='jobId=']"):
+        href = a.get("href", "")
+        title_el = a.select_one("[class*=companyJobTitle]")
+        if not title_el:
             continue
+        date_el = title_el.select_one("[class*=companyJobDate]")
+        if date_el:
+            date_el.extract()  # drop nested "posted X ago" text before reading the title
+        title = title_el.get_text(strip=True)
+        if not title or len(title) < 5:
+            continue
+        loc_el = a.select_one("[class*=companyJobLocation]")
+        location = loc_el.get_text(strip=True) if loc_el else ""
+        name_el = a.find_previous(class_=lambda c: c and "companyName" in c)
+        company = name_el.get_text(strip=True) if name_el else "Unknown"
+        full_url = href if href.startswith("http") else f"https://www.levels.fyi{href}"
         jobs.append({
-            "id": _uid("levels", r["href"]),
-            "title": r["title"],
-            "company": r["company"] or "Unknown",
-            "location": r["location"],
-            "url": r["href"],
+            "id": _uid("levels", href),
+            "title": title,
+            "company": company,
+            "location": location,
+            "url": full_url,
             "source": "levels",
             "posted_at": None,
             "description": "",
