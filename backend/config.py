@@ -10,10 +10,6 @@ ROLE_FILTERS = {
     "exclude": [
         "senior", "sr ", "sr.", "staff", "principal", "lead", "manager",
         "director", "vp ", "head of", "experienced", "expert",
-        # New grad / 0 experience: drop anything signalling required years or
-        # a non-entry level in the title (title-only — descriptions aren't fetched).
-        "2+ years", "3+ years", "4+ years", "5+ years", "6+ years",
-        "7+ years", "8+ years", "10+ years", "years of experience",
         " ii", " iii", " iv",
     ],
     # Positive US signals. "remote"/"hybrid" are NOT here — alone they matched
@@ -41,14 +37,25 @@ ROLE_FILTERS = {
         "luxembourg", "switzerland", "zurich", "brussels", "belgium",
         "netherlands", "amsterdam",
     ],
-    # Body-level exclusions: strong senior-experience signals that slip past a
-    # clean title. Kept to 5+ years only — lower thresholds ("2+ years preferred")
-    # show up in entry-level posts too and would wrongly drop new-grad roles.
-    "desc_exclude": [
-        "5+ years", "6+ years", "7+ years", "8+ years", "9+ years",
-        "10+ years", "5-7 years", "5-8 years", "7-10 years",
+    # US citizenship / clearance requirements — dropped unless a sponsorship
+    # signal is also present (some postings list both boilerplate clearance
+    # language and "we sponsor visas").
+    "citizenship_exclude": [
+        "us citizenship", "u.s. citizenship", "us citizen", "u.s. citizen",
+        "must be a citizen", "citizenship required", "security clearance",
+        "no sponsorship", "not provide sponsorship", "unable to sponsor",
+        "does not sponsor", "will not sponsor", "cannot sponsor",
+    ],
+    "sponsorship_signals": [
+        "visa sponsorship", "will sponsor", "we sponsor", "sponsor visas",
+        "sponsorship available", "able to sponsor", "provide sponsorship",
     ],
 }
+
+# Any "N years"/"N+ years"/"N-M years" mention (title or description) above
+# this cap rejects the job — regex-based, catches ranges like "2-5 years"
+# that plain substring lists miss.
+MAX_YEARS_EXPERIENCE = int(os.getenv("MAX_YEARS_EXPERIENCE", "2"))
 
 # ---- Tuning (env-overridable) ----
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))

@@ -1,6 +1,17 @@
+import re
 from datetime import datetime, timedelta, timezone
 
-from config import MAX_POSTED_AGE_DAYS, ROLE_FILTERS
+from config import MAX_POSTED_AGE_DAYS, MAX_YEARS_EXPERIENCE, ROLE_FILTERS
+
+
+def _max_years_required(text: str) -> int:
+    """Highest year-count mentioned in text (0 if none found)."""
+    years = []
+    for m in re.finditer(r"(\d+)\s*\+?\s*(?:-|to)?\s*(\d+)?\s*\+?\s*years?", text):
+        years.append(int(m.group(1)))
+        if m.group(2):
+            years.append(int(m.group(2)))
+    return max(years, default=0)
 
 
 def _too_old(posted_at: str | None) -> bool:
@@ -28,8 +39,13 @@ def matches(job: dict) -> bool:
     if not any(kw in title for kw in ROLE_FILTERS["titles"]):
         return False
 
-    # Must not match any exclusion keyword (seniority / experience / level)
+    # Must not match any exclusion keyword (seniority / level)
     if any(kw in title for kw in ROLE_FILTERS["exclude"]):
+        return False
+
+    # No years-of-experience number in the title may exceed the cap
+    # (catches "2-5 years", "3+ years", "5 years", etc.)
+    if _max_years_required(title) > MAX_YEARS_EXPERIENCE:
         return False
 
     # Location: US only. A positive US signal wins (US multi-city roles often
@@ -49,9 +65,16 @@ def matches(job: dict) -> bool:
         else:
             return False
 
-    # Body-level exclusion: drop senior roles whose title looked entry-level
+    # Body-level exclusion: drop roles whose description reveals a
+    # years-of-experience requirement above the cap (title looked entry-level)
     description = job.get("description", "").lower()
-    if any(kw in description for kw in ROLE_FILTERS["desc_exclude"]):
+    if _max_years_required(description) > MAX_YEARS_EXPERIENCE:
         return False
+
+    # Drop roles requiring US citizenship / clearance and not offering sponsorship
+    text = f"{title} {description}"
+    if any(kw in text for kw in ROLE_FILTERS["citizenship_exclude"]):
+        if not any(kw in text for kw in ROLE_FILTERS["sponsorship_signals"]):
+            return False
 
     return True
