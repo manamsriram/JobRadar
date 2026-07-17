@@ -1,0 +1,42 @@
+# Phase 2 — active.
+#
+# The host VM never spares RAM for Chromium (runs on a 1GB free-tier box), so
+# this Action runs the Playwright scrapers off-box and POSTs results to
+# /api/ingest. Requires the INGEST_URL / INGEST_TOKEN repository secrets to be
+# set (Settings > Secrets and variables > Actions) before the schedule fires.
+name: playwright-scraper (phase 2)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *" # every 30 min
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps + Chromium
+        run: |
+          pip install -r backend/requirements.txt
+          playwright install chromium --with-deps
+      - name: Scrape
+        working-directory: backend
+        run: python -m scrapers.playwright_scraper --companies ../data/companies.json --output jobs.json
+      - name: POST to /api/ingest
+        env:
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+        run: |
+          curl -sf -X POST "$INGEST_URL/api/ingest" \
+            -H "X-Ingest-Token: $INGEST_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @backend/jobs.json

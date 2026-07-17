@@ -7,3 +7,7 @@ __pycache__/
 .serena/
 .venv/
 *.tsbuildinfo
+
+# Runtime state (seeds companies.json / funding_queue.json are tracked)
+data/seen_jobs.json
+data/seen_funding.json

@@ -1,0 +1,5 @@
+# Set DOMAIN to your real domain for automatic HTTPS in production
+# (e.g. DOMAIN=example.com docker compose up). Defaults to :80 for local/IP-only dev.
+{$DOMAIN::80} {
+    reverse_proxy jobradar:8000
+}

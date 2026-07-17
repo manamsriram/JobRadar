@@ -1,134 +1,110 @@
-"""Job state store backed by Supabase Postgres via its PostgREST REST API.
+"""JSON-file state store on /data — the only persistent storage (user rule).
 
-Uses httpx (no Supabase SDK). The service key is server-side only and never
-reaches the browser — the React app talks to FastAPI, never Supabase directly.
+Everything the poller needs to survive a restart lives as plain JSON under
+DATA_DIR: seen jobs, the funding queue, and seen-funding ids. No database.
+
+All writes are atomic (write .tmp then os.replace) so a crash mid-write can
+never corrupt the single source of truth (senior-review fix #5).
 """
+import json
 import os
+import pathlib
 from datetime import datetime, timedelta, timezone
 
-import httpx
-
-TABLE = "jobs"
-TIMEOUT = 10
-
-
-def _conf() -> tuple[str, dict]:
-    """Return (base_url, headers). Raise a clear error if unconfigured (F5)."""
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_KEY")
-    if not url or not key:
-        raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set to use the job store."
-        )
-    base = f"{url.rstrip('/')}/rest/v1/{TABLE}"
-    headers = {
-        "apikey": key,
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-    }
-    return base, headers
+# /data is the mounted persistent volume in Docker. Override with DATA_DIR for
+# local dev (e.g. DATA_DIR=./data uvicorn main:app).
+DATA_DIR = pathlib.Path(os.getenv("DATA_DIR", "/data"))
+SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
+COMPANIES_FILE = DATA_DIR / "companies.json"
+FUNDING_QUEUE_FILE = DATA_DIR / "funding_queue.json"
+SEEN_FUNDING_FILE = DATA_DIR / "seen_funding.json"
 
 
-async def load_seen() -> dict:
-    """All rows keyed by id. Dataset is tiny (<=3000 rows), so fetching all is fine."""
-    base, headers = _conf()
-    async with httpx.AsyncClient() as client:
-        r = await client.get(f"{base}?select=*", headers=headers, timeout=TIMEOUT)
-        r.raise_for_status()
-        return {row["id"]: row for row in r.json()}
+def _read_json(path: pathlib.Path, default):
+    """Missing file -> default (genuine first run). Corrupt/unreadable file ->
+    raise, so callers don't silently treat a broken state store as empty."""
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        return default
 
 
-async def upsert_job(job: dict) -> None:
-    """Insert or merge one job by primary key (F3: persist per job)."""
-    base, headers = _conf()
-    headers = {**headers, "Prefer": "resolution=merge-duplicates,return=minimal"}
-    async with httpx.AsyncClient() as client:
-        r = await client.post(base, headers=headers, json=job, timeout=TIMEOUT)
-        r.raise_for_status()
+def _write_json_atomic(path: pathlib.Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    os.replace(tmp, path)  # atomic on POSIX
 
 
-async def purge_old(days: int) -> None:
-    """Delete un-applied jobs posted before the calendar-day cutoff (safety net;
-    the Supabase pg_cron is the primary purger). Skipped gracefully by the caller
-    if the `applied` column isn't present yet."""
-    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
-    base, headers = _conf()
-    headers = {**headers, "Prefer": "return=minimal"}
-    async with httpx.AsyncClient() as client:
-        r = await client.delete(
-            base,
-            params={"posted_at": f"lt.{cutoff}", "applied": "eq.false"},
-            headers=headers,
-            timeout=TIMEOUT,
-        )
-        r.raise_for_status()
+# ---- Seen jobs ----
+def load_seen() -> dict:
+    """All persisted jobs keyed by id."""
+    return _read_json(SEEN_JOBS_FILE, {})
 
 
-async def mark_applied(job_id: str) -> None:
-    """Flag a job applied=true so the purge/cron preserves it."""
-    base, headers = _conf()
-    headers = {**headers, "Prefer": "return=minimal"}
-    async with httpx.AsyncClient() as client:
-        r = await client.patch(
-            base,
-            params={"id": f"eq.{job_id}"},
-            headers=headers,
-            json={"applied": True},
-            timeout=TIMEOUT,
-        )
-        r.raise_for_status()
-
-
-async def is_empty() -> bool:
-    """True if the table has no rows (drives the F2 silent-seed decision)."""
-    base, headers = _conf()
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{base}?select=id&limit=1", headers=headers, timeout=TIMEOUT
-        )
-        r.raise_for_status()
-        return len(r.json()) == 0
-
-
-async def get_matched(limit: int | None = None) -> list[dict]:
-    """Matched jobs, newest first — feeds GET /api/jobs."""
-    base, headers = _conf()
-    q = f"{base}?matched=eq.true&order=posted_at.desc"
-    if limit:
-        q += f"&limit={limit}"
-    async with httpx.AsyncClient() as client:
-        r = await client.get(q, headers=headers, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r.json()
-
-
-async def get_matched_unnotified(limit: int) -> list[dict]:
-    """Matched jobs not yet emailed, newest first — feeds the digest (F3)."""
-    base, headers = _conf()
-    q = f"{base}?matched=eq.true&notified=eq.false&order=posted_at.desc&limit={limit}"
-    async with httpx.AsyncClient() as client:
-        r = await client.get(q, headers=headers, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r.json()
-
-
-async def mark_notified(ids: list[str]) -> None:
-    """Flip notified=true for the given job ids."""
-    if not ids:
-        return
-    base, headers = _conf()
-    headers = {**headers, "Prefer": "return=minimal"}
-    id_list = ",".join(ids)
-    async with httpx.AsyncClient() as client:
-        r = await client.patch(
-            f"{base}?id=in.({id_list})",
-            headers=headers,
-            json={"notified": True},
-            timeout=TIMEOUT,
-        )
-        r.raise_for_status()
+def save_seen(seen: dict) -> None:
+    _write_json_atomic(SEEN_JOBS_FILE, seen)
 
 
 def get_new_jobs(seen: dict, fetched: list[dict]) -> list[dict]:
-    """Jobs from `fetched` not already present in `seen`."""
-    return [j for j in fetched if j["id"] not in seen]
+    """Jobs from `fetched` whose id is not already in `seen`."""
+    return [j for j in fetched if j.get("id") and j["id"] not in seen]
+
+
+def purge_old(seen: dict, days: int) -> dict:
+    """Drop jobs first scraped more than `days` calendar days ago. Applied jobs
+    are always kept. Returns the pruned dict (caller persists it)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    kept = {}
+    for jid, job in seen.items():
+        if job.get("applied"):
+            kept[jid] = job
+            continue
+        ts = job.get("scraped_at")
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
+        except (ValueError, AttributeError):
+            dt = None
+        if dt is None or dt >= cutoff:
+            kept[jid] = job
+    return kept
+
+
+def mark_applied(job_id: str) -> bool:
+    """Flag a job applied=true so purge_old preserves it. Returns True if found."""
+    seen = load_seen()
+    job = seen.get(job_id)
+    if not job:
+        return False
+    job["applied"] = True
+    save_seen(seen)
+    return True
+
+
+def get_matched(seen: dict) -> list[dict]:
+    """Matched jobs, newest first — feeds GET /api/jobs."""
+    matched = [j for j in seen.values() if j.get("matched")]
+    matched.sort(key=lambda j: j.get("posted_at") or j.get("scraped_at") or "", reverse=True)
+    return matched
+
+
+# ---- Companies (seed lives in repo data/, mounted to /data) ----
+def load_companies() -> list[dict]:
+    return _read_json(COMPANIES_FILE, [])
+
+
+# ---- Funding signal queue ----
+def load_funding_queue() -> list[dict]:
+    return _read_json(FUNDING_QUEUE_FILE, [])
+
+
+def save_funding_queue(queue: list[dict]) -> None:
+    _write_json_atomic(FUNDING_QUEUE_FILE, queue)
+
+
+def load_seen_funding() -> set:
+    return set(_read_json(SEEN_FUNDING_FILE, []))
+
+
+def save_seen_funding(ids: set) -> None:
+    _write_json_atomic(SEEN_FUNDING_FILE, sorted(ids))

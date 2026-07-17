@@ -1,4 +1,4 @@
-import type { Contact } from "../types";
+import type { Contact } from "../hooks/useSSE";
 
 export default function ContactCard({ contact }: { contact: Contact }) {
   return (

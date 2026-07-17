@@ -1,0 +1,24 @@
+# Keeps the repo from going stale (GitHub disables scheduled Actions after 60
+# days of no commits). Weekly Monday commit only — NO health ping (UptimeRobot
+# pings the VM externally).
+name: keep-alive
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # 09:00 UTC every Monday
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Empty keep-alive commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: weekly keep-alive"
+          git push

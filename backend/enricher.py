@@ -30,7 +30,7 @@ async def find_contacts(domain: str) -> list[dict]:
             r.raise_for_status()
             emails = r.json().get("data", {}).get("emails", [])
     except (httpx.HTTPError, ValueError) as e:
-        log.warning("Hunter lookup failed for %s: %s", domain, e)
+        print(f"[enricher] error: {e}")
         return []
 
     contacts = []

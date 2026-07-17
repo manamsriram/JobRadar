@@ -1,0 +1,26 @@
+# Never ship secrets into the image.
+.env
+.env.*
+!.env.example
+
+# Host virtualenv / caches: macOS binaries, useless (and harmful) in a Linux image.
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Host node_modules would clobber the container's `npm ci` result.
+**/node_modules
+frontend/dist
+
+# Runtime state lives on the /data volume, not in the image.
+data/seen_jobs.json
+data/seen_funding.json
+
+.git
+.github
+docs
+*.md

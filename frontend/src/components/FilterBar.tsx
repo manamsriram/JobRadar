@@ -1,7 +1,17 @@
 interface Filters {
   title: string;
   location: string;
+  source: string;
 }
+
+const SOURCES = [
+  { value: "", label: "All sources" },
+  { value: "custom", label: "Company site" },
+  { value: "levels", label: "Levels.fyi" },
+  { value: "yc", label: "Y Combinator" },
+  { value: "tldr", label: "TLDR Jobs" },
+  { value: "funding", label: "Funding signal" },
+];
 
 export default function FilterBar({
   filters,
@@ -26,6 +36,18 @@ export default function FilterBar({
         onChange={(e) => onChange({ ...filters, location: e.target.value })}
         className="border rounded px-3 py-1 text-sm flex-1"
       />
+      <select
+        aria-label="Filter by source"
+        value={filters.source}
+        onChange={(e) => onChange({ ...filters, source: e.target.value })}
+        className="border rounded px-3 py-1 text-sm"
+      >
+        {SOURCES.map((s) => (
+          <option key={s.value} value={s.value}>
+            {s.label}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

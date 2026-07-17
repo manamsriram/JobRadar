@@ -1,19 +1,33 @@
 import { Fragment, useState } from "react";
-import type { Job } from "../types";
-import { API_BASE } from "../api";
+import type { Job } from "../hooks/useSSE";
 import ContactCard from "./ContactCard";
+
+const SOURCE_LABELS: Record<string, string> = {
+  custom: "Company site",
+  levels: "Levels.fyi",
+  yc: "Y Combinator",
+  tldr: "TLDR Jobs",
+  funding: "Funding",
+};
 
 export default function JobTable({ jobs }: { jobs: Job[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [applied, setApplied] = useState<Set<string>>(new Set());
 
-  // Optimistically flag applied, then persist so the purge/cron keeps the job.
+  // Optimistically flag applied, then persist so purge/cron keeps the job.
+  // Roll back on failure so the UI doesn't show "applied" for something the
+  // server never recorded.
   async function markApplied(id: string) {
     setApplied((prev) => new Set(prev).add(id));
     try {
-      await fetch(`${API_BASE}/api/jobs/${id}/apply`, { method: "POST" });
+      const res = await fetch(`/api/jobs/${id}/apply`, { method: "POST" });
+      if (!res.ok) throw new Error(`apply failed: ${res.status}`);
     } catch {
-      // optimistic — a failed call just won't preserve the job past 3 days
+      setApplied((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   }
 
@@ -24,6 +38,7 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
           <th className="p-2">Title</th>
           <th className="p-2">Company</th>
           <th className="p-2">Location</th>
+          <th className="p-2">Source</th>
           <th className="p-2">Posted</th>
           <th className="p-2">Apply</th>
           <th className="p-2">Applied?</th>
@@ -41,6 +56,11 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
                 <td className="p-2 font-medium">{job.title}</td>
                 <td className="p-2">{job.company}</td>
                 <td className="p-2 text-gray-500">{job.location}</td>
+                <td className="p-2">
+                  <span className="inline-block px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 text-xs">
+                    {SOURCE_LABELS[job.source ?? ""] ?? job.source ?? "—"}
+                  </span>
+                </td>
                 <td className="p-2 text-gray-400">
                   {job.posted_at
                     ? new Date(job.posted_at).toLocaleDateString()
@@ -74,9 +94,10 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
                 </td>
               </tr>
               {expanded === job.id &&
-                (job.description || (job.contacts && job.contacts.length > 0)) && (
+                (job.description ||
+                  (job.contacts && job.contacts.length > 0)) && (
                   <tr>
-                    <td colSpan={6} className="bg-gray-50 px-4 py-2">
+                    <td colSpan={7} className="bg-gray-50 px-4 py-2">
                       {job.description && (
                         <p className="text-gray-600 whitespace-pre-line mb-3 max-h-60 overflow-y-auto">
                           {job.description}
