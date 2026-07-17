@@ -27,7 +27,6 @@ from config import FUNDING_CHECK_INTERVAL, POLL_INTERVAL_SECONDS, PURGE_AFTER_DA
 from enricher import find_contacts
 from filter import matches
 from notifier import send_email_alert
-from scrapers.tldr_scraper import fetch_tldr
 from scrapers.yc_scraper import fetch_yc
 from signals.careers_discovery import discover_careers_url
 from signals.funding_watcher import check_funding, resolve_domain_from_article
@@ -119,7 +118,6 @@ async def _gather_sources(companies: list[dict]) -> list[dict]:
     """Run every source; concatenate results. Each source guards its own errors."""
     jobs: list[dict] = []
     jobs += await fetch_yc()
-    jobs += await fetch_tldr()
     for company in companies:
         jobs += await _scrape_company(company)
     return jobs

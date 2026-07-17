@@ -1,0 +1,26 @@
+# Deploys to the Oracle VM on every push to main: SSH in, pull, rebuild the
+# compose stack. .env lives only on the VM (gitignored), never touched here.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17  # v1.2.0
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            cd ~/JobRadar
+            git pull --ff-only
+            docker compose up -d --build

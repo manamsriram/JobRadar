@@ -14,7 +14,6 @@ SOURCE_LABELS = {
     "custom": "Company site",
     "levels": "Levels.fyi",
     "yc": "Y Combinator",
-    "tldr": "TLDR Jobs",
     "funding": "Funding signal",
 }
 
