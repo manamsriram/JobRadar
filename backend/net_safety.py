@@ -26,7 +26,14 @@ def _is_public_ip(ip: str) -> bool:
 
 
 def is_safe_url(url: str) -> bool:
-    """True if `url` is http(s) and its host resolves only to public IPs."""
+    """True if `url` is http(s) and its host resolves only to public IPs.
+
+    Known gap: this resolves DNS now and the caller's HTTP client (httpx) resolves
+    again at connect time. A DNS-rebinding attacker who flips the record between
+    these two lookups slips past this check. Not fixed: pinning the validated IP
+    while keeping the original Host/SNI needs a custom httpx transport, which is
+    more machinery than this single-user hobby project's threat model justifies.
+    """
     try:
         parsed = urlparse(url)
     except ValueError:
@@ -35,7 +42,7 @@ def is_safe_url(url: str) -> bool:
         return False
     try:
         infos = socket.getaddrinfo(parsed.hostname, None)
-    except socket.gaierror:
+    except (socket.gaierror, UnicodeError):
         return False
     ips = {info[4][0] for info in infos}
     return bool(ips) and all(_is_public_ip(ip) for ip in ips)

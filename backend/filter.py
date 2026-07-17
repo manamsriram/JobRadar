@@ -35,8 +35,11 @@ def matches(job: dict) -> bool:
     # Location: US only. A positive US signal wins (US multi-city roles often
     # also list Toronto/Dublin). Otherwise plain remote/hybrid passes only when
     # no non-US marker is present ("Remote - Brussels", "Seoul (Hybrid)" fail).
+    # Blank location (custom career pages with no locatable DOM element) is not
+    # a non-US signal — trust the curated (US) company list rather than reject.
     has_us = (
-        location.strip() in ("us", "u.s", "u.s.")
+        not location.strip()
+        or location.strip() in ("us", "u.s", "u.s.")
         or any(loc in location for loc in ROLE_FILTERS["locations"])
     )
     if not has_us:

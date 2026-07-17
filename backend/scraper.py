@@ -84,10 +84,23 @@ async def _fetch_plain(company: str, url: str) -> list[dict]:
         uid = hashlib.md5(full.encode()).hexdigest()[:12]
         jobs.append({
             "id": f"custom_{company.lower()}_{uid}",
-            "title": title, "company": company, "location": "See listing",
+            "title": title, "company": company, "location": _nearby_location(a),
             "url": full, "source": "custom", "posted_at": None, "description": "",
         })
     return jobs
+
+
+def _nearby_location(anchor) -> str:
+    """Best-effort location text near a career-page anchor (a sibling/descendant
+    element whose class/id names it as a location). Empty if none found —
+    filter.py treats blank location as trusting the curated company's US listing."""
+    for el in anchor.parent.find_all(True, limit=8):
+        ident = (el.get("class") and " ".join(el.get("class"))) or el.get("id") or ""
+        if "location" in ident.lower():
+            text = el.get_text(strip=True)
+            if text:
+                return text
+    return ""
 
 
 async def _scrape_company(company: dict) -> list[dict]:
@@ -156,12 +169,16 @@ async def poll_loop() -> None:
                     j["source"] = "funding"
                 await _process(found, seen, companies, seed_mode)
 
-            # Merge in any applied-flags set by concurrent /api/jobs/{id}/apply
-            # calls during this cycle, so this save doesn't clobber them.
+            # Merge in whatever changed concurrently (applied-flags from
+            # /api/jobs/{id}/apply, or jobs ingested via /api/ingest) during this
+            # cycle's runtime, so this save doesn't clobber them.
             current = state.load_seen()
             for jid, job in current.items():
-                if job.get("applied") and jid in seen:
+                if jid not in seen:
+                    seen[jid] = job
+                elif job.get("applied"):
                     seen[jid]["applied"] = True
+            seen = state.purge_old(seen, days=PURGE_AFTER_DAYS)
             state.save_seen(seen)
             print(f"[scraper] poll cycle complete ({len(seen)} known). Sleep {POLL_INTERVAL_SECONDS}s.")
         except Exception as e:
@@ -181,16 +198,19 @@ async def funding_loop() -> None:
                 if entry.get("careers_url"):
                     continue
                 # Real domain from the article's outbound link; the headline
-                # guess ("<company>.com") is only a fallback.
-                domain = None
-                if entry.get("article_url"):
+                # guess ("<company>.com") is only a fallback. Once resolved,
+                # don't re-fetch the article every cycle just because
+                # discover_careers_url hasn't found a careers page yet.
+                if not entry.get("domain_resolved") and entry.get("article_url"):
                     domain = await resolve_domain_from_article(
                         entry["article_url"], entry.get("company")
                     )
-                domain = domain or entry.get("domain")
+                    if domain:
+                        entry["domain"] = domain
+                        entry["domain_resolved"] = True
+                domain = entry.get("domain")
                 if not domain:
                     continue
-                entry["domain"] = domain
                 entry["careers_url"] = await discover_careers_url(domain)
             state.save_funding_queue(queue)
         except Exception as e:
