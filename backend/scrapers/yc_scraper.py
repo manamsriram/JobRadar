@@ -10,6 +10,8 @@ import random
 import httpx
 from bs4 import BeautifulSoup
 
+from fetch import fetch_with_retry
+
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -17,15 +19,16 @@ _UA = (
 _URL = "https://www.ycombinator.com/jobs/role/software-engineer"
 
 
-async def fetch_yc() -> list[dict]:
+async def fetch_yc(retries: int = 2) -> tuple[list[dict], bool]:
+    """Returns (jobs, ok) — ok is False only on a fetch-level failure, not on
+    zero jobs found, so callers can feed it straight into source-health tracking."""
     await asyncio.sleep(random.uniform(1.5, 3.0))  # polite jitter
     try:
         async with httpx.AsyncClient(headers={"User-Agent": _UA}) as client:
-            r = await client.get(_URL, timeout=15, follow_redirects=True)
-            r.raise_for_status()
+            r = await fetch_with_retry(client, _URL, retries=retries)
     except httpx.HTTPError as e:
         print(f"[yc_scraper] error: {e}")
-        return []
+        return [], False
 
     soup = BeautifulSoup(r.text, "html.parser")
     # Broken selector? YC lists each role as an <a class="..."> whose href starts
@@ -56,4 +59,4 @@ async def fetch_yc() -> list[dict]:
             "posted_at": None,
             "description": "",
         })
-    return jobs
+    return jobs, True

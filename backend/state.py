@@ -4,11 +4,16 @@ Everything the poller needs to survive a restart lives as plain JSON under
 DATA_DIR: seen jobs, the funding queue, and seen-funding ids. No database.
 
 All writes are atomic (write .tmp then os.replace) so a crash mid-write can
-never corrupt the single source of truth (senior-review fix #5).
+never corrupt the single source of truth (senior-review fix #5). seen_jobs.json
+additionally keeps a bounded, rotating backup snapshot (finding #5) — it's the
+one file where a bad write (corrupt scrape, botched merge) would lose real
+data. Backups are capped at BACKUP_KEEP and pruned on every write, so this
+never turns into unbounded disk growth on the 1GB VM.
 """
 import json
 import os
 import pathlib
+import shutil
 from datetime import datetime, timedelta, timezone
 
 # /data is the mounted persistent volume in Docker. Override with DATA_DIR for
@@ -18,6 +23,9 @@ SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
 COMPANIES_FILE = DATA_DIR / "companies.json"
 FUNDING_QUEUE_FILE = DATA_DIR / "funding_queue.json"
 SEEN_FUNDING_FILE = DATA_DIR / "seen_funding.json"
+SOURCE_HEALTH_FILE = DATA_DIR / "source_health.json"
+COMPANY_ALIASES_FILE = DATA_DIR / "company_aliases.json"
+BACKUP_KEEP = 3
 
 
 def _read_json(path: pathlib.Path, default):
@@ -36,6 +44,22 @@ def _write_json_atomic(path: pathlib.Path, data) -> None:
     os.replace(tmp, path)  # atomic on POSIX
 
 
+def _prune_backups(path: pathlib.Path, keep: int) -> None:
+    backups = sorted(path.parent.glob(f"{path.name}.*.bak"))
+    for old in backups[:-keep] if keep > 0 else backups:
+        old.unlink(missing_ok=True)
+
+
+def _write_json_atomic_with_backup(path: pathlib.Path, data, keep: int = BACKUP_KEEP) -> None:
+    """Snapshot the current file before overwriting, then prune to the last
+    `keep` snapshots. Bounded by construction — never accumulates."""
+    if path.exists():
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        shutil.copy2(path, path.with_name(f"{path.name}.{stamp}.bak"))
+        _prune_backups(path, keep)
+    _write_json_atomic(path, data)
+
+
 # ---- Seen jobs ----
 def load_seen() -> dict:
     """All persisted jobs keyed by id."""
@@ -43,7 +67,7 @@ def load_seen() -> dict:
 
 
 def save_seen(seen: dict) -> None:
-    _write_json_atomic(SEEN_JOBS_FILE, seen)
+    _write_json_atomic_with_backup(SEEN_JOBS_FILE, seen)
 
 
 def get_new_jobs(seen: dict, fetched: list[dict]) -> list[dict]:
@@ -93,6 +117,15 @@ def load_companies() -> list[dict]:
     return _read_json(COMPANIES_FILE, [])
 
 
+# ---- Company alias canonicalization (finding #6) ----
+# ATS org-name vs. curated brand-name drift (Greenhouse/Lever/Ashby board slugs,
+# YC's href-derived slug) breaks anything keyed by company name — health
+# tracking, contact enrichment, the trust domain check. Static map, hand-verify
+# each entry; alias -> canonical name in companies.json.
+def load_company_aliases() -> dict:
+    return _read_json(COMPANY_ALIASES_FILE, {})
+
+
 # ---- Funding signal queue ----
 def load_funding_queue() -> list[dict]:
     return _read_json(FUNDING_QUEUE_FILE, [])
@@ -108,3 +141,25 @@ def load_seen_funding() -> set:
 
 def save_seen_funding(ids: set) -> None:
     _write_json_atomic(SEEN_FUNDING_FILE, sorted(ids))
+
+
+# ---- Source health (finding #1) ----
+def load_health() -> dict:
+    return _read_json(SOURCE_HEALTH_FILE, {})
+
+
+def save_health(health: dict) -> None:
+    _write_json_atomic(SOURCE_HEALTH_FILE, health)
+
+
+def record_health(health: dict, source: str, ok: bool) -> dict:
+    """Update `source`'s consecutive-failure streak in place. `ok` must reflect
+    fetch-level success (no exception, non-5xx) — never "0 jobs matched",
+    since a legitimate zero-results cycle isn't a scraper break (senior-pass
+    caveat: keying off match count would cry wolf on normal filter-starvation)."""
+    entry = health.get(source, {"consecutive_failures": 0})
+    entry["consecutive_failures"] = 0 if ok else entry.get("consecutive_failures", 0) + 1
+    entry["status"] = "ok" if ok else "failing"
+    entry["last_checked"] = datetime.now(timezone.utc).isoformat()
+    health[source] = entry
+    return health

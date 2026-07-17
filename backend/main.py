@@ -37,9 +37,22 @@ app = FastAPI(lifespan=lifespan)
 # No CORS: the React build is served same-origin from this app (StaticFiles below).
 
 
+# Consecutive fetch failures before a source counts as "down" for the
+# /api/health status code (not just the per-source detail).
+HEALTH_FAILURE_THRESHOLD = 3
+
+
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    sources = state.load_health()
+    down = {
+        name: s for name, s in sources.items()
+        if s.get("consecutive_failures", 0) >= HEALTH_FAILURE_THRESHOLD
+    }
+    body = {"status": "degraded" if down else "ok", "sources": sources}
+    if down:
+        return JSONResponse(body, status_code=503)
+    return body
 
 
 @app.get("/api/jobs")

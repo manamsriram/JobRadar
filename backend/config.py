@@ -65,6 +65,11 @@ FUNDING_CHECK_INTERVAL = int(os.getenv("FUNDING_CHECK_INTERVAL", "3600"))
 ALERT_INTERVAL_SECONDS = int(os.getenv("ALERT_INTERVAL_SECONDS", str(4 * 3600)))
 ALERT_DIGEST_SIZE = int(os.getenv("ALERT_DIGEST_SIZE", "5"))
 PURGE_AFTER_DAYS = int(os.getenv("PURGE_AFTER_DAYS", "3"))
+# Total fetch retries allowed across one poll cycle (finding #2 guardrail) —
+# caps retry-storm blowup when many sources fail at once (e.g. a network blip)
+# instead of letting every source retry independently and stack past the next
+# poll interval.
+CYCLE_RETRY_BUDGET = int(os.getenv("CYCLE_RETRY_BUDGET", "20"))
 # Only surface jobs posted within this many days (calendar-day granularity).
 # Niche boards post fresh roles; 14 balances freshness vs. volume.
 MAX_POSTED_AGE_DAYS = int(os.getenv("MAX_POSTED_AGE_DAYS", "14"))

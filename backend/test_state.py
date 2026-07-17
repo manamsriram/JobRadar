@@ -78,6 +78,34 @@ def test_mark_applied_returns_false_for_unknown_job(tmp_path, monkeypatch):
     assert state.mark_applied("nope") is False
 
 
+def test_record_health_resets_streak_on_success():
+    health = {"yc": {"consecutive_failures": 3, "status": "failing"}}
+    health = state.record_health(health, "yc", ok=True)
+    assert health["yc"]["consecutive_failures"] == 0
+    assert health["yc"]["status"] == "ok"
+
+
+def test_record_health_increments_streak_on_failure():
+    health = state.record_health({}, "yc", ok=False)
+    health = state.record_health(health, "yc", ok=False)
+    assert health["yc"]["consecutive_failures"] == 2
+    assert health["yc"]["status"] == "failing"
+
+
+def test_save_seen_creates_bounded_backups(tmp_path, monkeypatch):
+    monkeypatch.setattr(state, "SEEN_JOBS_FILE", tmp_path / "seen_jobs.json")
+    for i in range(state.BACKUP_KEEP + 2):
+        state.save_seen({"a": {"n": i}})
+    backups = sorted(tmp_path.glob("seen_jobs.json.*.bak"))
+    assert len(backups) <= state.BACKUP_KEEP
+    assert state.load_seen() == {"a": {"n": state.BACKUP_KEEP + 1}}
+
+
+def test_load_company_aliases_defaults_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(state, "COMPANY_ALIASES_FILE", tmp_path / "missing.json")
+    assert state.load_company_aliases() == {}
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-q"]))

@@ -22,15 +22,19 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
+import aliases
 import state
+import trust
 from config import (
     ALERT_DIGEST_SIZE,
     ALERT_INTERVAL_SECONDS,
+    CYCLE_RETRY_BUDGET,
     FUNDING_CHECK_INTERVAL,
     POLL_INTERVAL_SECONDS,
     PURGE_AFTER_DAYS,
 )
 from enricher import find_contacts
+from fetch import RetryBudget, fetch_with_retry
 from filter import matches
 from notifier import send_digest_alert
 from scrapers.yc_scraper import fetch_yc
@@ -67,16 +71,17 @@ def _push_live(job: dict) -> None:
             pass
 
 
-async def _fetch_plain(company: str, url: str) -> list[dict]:
-    """Scrape a server-rendered career page with httpx + BS4 (no browser)."""
+async def _fetch_plain(company: str, url: str, retries: int = 2) -> tuple[list[dict], bool]:
+    """Scrape a server-rendered career page with httpx + BS4 (no browser).
+    Returns (jobs, ok) — ok is False only on a fetch-level failure, never on
+    zero jobs found (see state.record_health)."""
     await asyncio.sleep(random.uniform(1.5, 3.0))
     try:
         async with httpx.AsyncClient(headers={"User-Agent": _UA}) as client:
-            r = await client.get(url, timeout=15, follow_redirects=True)
-            r.raise_for_status()
+            r = await fetch_with_retry(client, url, retries=retries)
     except httpx.HTTPError as e:
         print(f"[scraper] error fetching {company} ({url}): {e}")
-        return []
+        return [], False
     soup = BeautifulSoup(r.text, "html.parser")
     # Broken selector? Most plain career pages link roles via /jobs//careers/
     # anchors. If empty for a real company, add a per-company selector override.
@@ -98,7 +103,7 @@ async def _fetch_plain(company: str, url: str) -> list[dict]:
             "title": title, "company": company, "location": _nearby_location(a),
             "url": full, "source": "custom", "posted_at": None, "description": "",
         })
-    return jobs
+    return jobs, True
 
 
 # Career-page templates often put a generic CTA in the anchor itself (e.g.
@@ -135,38 +140,54 @@ def _nearby_location(anchor) -> str:
     return ""
 
 
-async def _scrape_company(company: dict) -> list[dict]:
+async def _scrape_company(company: dict, budget: RetryBudget | None = None) -> tuple[list[dict], bool | None]:
+    """Returns (jobs, ok). ok is None for skipped sources (no url, or
+    requires_js — those aren't attempts, so they shouldn't count as health
+    failures)."""
     name = company.get("name", "Unknown")
     url = company.get("careers_url")
     if not url:
-        return []
+        return [], None
     if company.get("requires_js"):
         # Phase 2: JS-rendered pages are scraped off-box by the GitHub Action
         # (scrapers/playwright_scraper.py) and arrive via /api/ingest instead.
-        return []
-    return await _fetch_plain(name, url)
+        return [], None
+    retries = budget.take(2) if budget else 2
+    return await _fetch_plain(name, url, retries=retries)
 
 
-async def _gather_sources(companies: list[dict]) -> list[dict]:
-    """Run every source; concatenate results. Each source guards its own errors."""
+async def _gather_sources(
+    companies: list[dict], budget: RetryBudget, health: dict[str, bool]
+) -> list[dict]:
+    """Run every source; concatenate results. Each source guards its own errors
+    and records its outcome into `health` (source name -> ok) for a single
+    batched health save at the end of the cycle."""
     jobs: list[dict] = []
-    jobs += await fetch_yc()
+    yc_jobs, yc_ok = await fetch_yc(retries=budget.take(2))
+    jobs += yc_jobs
+    health["yc"] = yc_ok
     for company in companies:
-        jobs += await _scrape_company(company)
+        c_jobs, ok = await _scrape_company(company, budget)
+        jobs += c_jobs
+        if ok is not None:
+            health[f"company:{company.get('name', 'Unknown')}"] = ok
     return jobs
 
 
 async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mode: bool) -> None:
     by_name = {c.get("name", "").lower(): c for c in companies}
+    alias_map = state.load_company_aliases()
     contacts_cache: dict[str, list] = {}  # per-cycle, per-domain
     for job in state.get_new_jobs(seen, jobs):
         job["scraped_at"] = _now()
         if not job.get("posted_at"):
             job["posted_at"] = job["scraped_at"]
+        job["company"] = aliases.canonicalize_company(job.get("company", ""), alias_map)
         job["matched"] = matches(job)
 
         if job["matched"]:
             company = by_name.get(job.get("company", "").lower())
+            job["low_confidence"] = trust.score_posting(job, company)
             domain = company.get("domain") if company else None
             if company and company.get("tier") == 1 and domain:
                 if domain not in contacts_cache:
@@ -185,8 +206,10 @@ async def poll_loop() -> None:
             seed_mode = not seen  # first ever run: persist silently, don't email
             seen = state.purge_old(seen, days=PURGE_AFTER_DAYS)
             companies = state.load_companies()
+            budget = RetryBudget(CYCLE_RETRY_BUDGET)
+            health_updates: dict[str, bool] = {}
 
-            jobs = await _gather_sources(companies)
+            jobs = await _gather_sources(companies, budget, health_updates)
             await _process(jobs, seen, companies, seed_mode)
 
             # Discovered careers pages from funding signals
@@ -194,11 +217,19 @@ async def poll_loop() -> None:
                 url = entry.get("careers_url")
                 if not url:
                     continue
-                found = await _scrape_company({"name": entry.get("company", "Funded"),
-                                               "careers_url": url})
+                found, ok = await _scrape_company(
+                    {"name": entry.get("company", "Funded"), "careers_url": url}, budget
+                )
                 for j in found:
                     j["source"] = "funding"
+                if ok is not None:
+                    health_updates[f"funding:{entry.get('company', 'Funded')}"] = ok
                 await _process(found, seen, companies, seed_mode)
+
+            health = state.load_health()
+            for source, ok in health_updates.items():
+                health = state.record_health(health, source, ok)
+            state.save_health(health)
 
             # Merge in whatever changed concurrently (applied-flags from
             # /api/jobs/{id}/apply, or jobs ingested via /api/ingest) during this
