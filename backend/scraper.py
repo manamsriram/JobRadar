@@ -75,8 +75,10 @@ async def _fetch_plain(company: str, url: str) -> list[dict]:
     import hashlib
     for a in anchors:
         href = a.get("href", "")
-        title = a.get_text(strip=True)
-        if not title or len(title) < 5 or href in seen_hrefs:
+        if not href or href in seen_hrefs:
+            continue
+        title = _real_title(a, href)
+        if not title or len(title) < 5:
             continue
         seen_hrefs.add(href)
         full = urljoin(url, href)
@@ -87,6 +89,27 @@ async def _fetch_plain(company: str, url: str) -> list[dict]:
             "url": full, "source": "custom", "posted_at": None, "description": "",
         })
     return jobs
+
+
+# Career-page templates often put a generic CTA in the anchor itself (e.g.
+# Plaid: <a>See role</a>) rather than the role name — sibling text near the
+# anchor is unreliable too (frequently a location list, not a title). The
+# href slug is the one thing consistently present and accurate across
+# templates: ".../content-lead/" -> "Content Lead".
+_CTA_PHRASES = {
+    "see role", "view role", "apply", "apply now", "learn more",
+    "view position", "see job", "view job", "read more", "see details",
+    "view details", "see more",
+}
+
+
+def _real_title(anchor, href: str) -> str:
+    raw = anchor.get_text(strip=True)
+    if raw and raw.lower() not in _CTA_PHRASES and len(raw) >= 5:
+        return raw
+
+    slug = href.rstrip("/").split("/")[-1]
+    return slug.replace("-", " ").title() if slug else raw
 
 
 def _nearby_location(anchor) -> str:
