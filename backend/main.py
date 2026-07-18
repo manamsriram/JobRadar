@@ -12,6 +12,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import enricher
 import state
 from filter import matches
 from scraper import digest_loop, funding_loop, new_jobs_queue, poll_loop
@@ -69,6 +70,43 @@ async def apply_job(job_id: str):
     if not state.mark_applied(job_id):
         raise HTTPException(status_code=404, detail="job not found")
     return {"ok": True}
+
+
+@app.get("/api/jobs/{job_id}/contacts")
+async def get_job_contacts(job_id: str):
+    """Cache-only read — no Hunter call, free. Lets any other job at an
+    already-researched company show prior contacts immediately."""
+    job = state.load_seen().get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    result = enricher.get_company_contacts(job.get("company", ""), job.get("url"))
+    return {"contacts": result["contacts"], "domain_guessed": result["domain_guessed"]}
+
+
+@app.post("/api/jobs/{job_id}/contacts")
+async def find_job_contact(job_id: str):
+    """On-demand Hunter.io lookup — fired manually right after applying, not
+    from the poll loop. Fetches one *new* contact and appends it to the
+    per-company cache, so it (and every contact found before it) shows up on
+    any other job at the same company via GET, at no further cost."""
+    seen = state.load_seen()
+    job = seen.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    result = await enricher.find_contact(job.get("company", ""), job.get("url"))
+    if result.get("error") == "no_domain":
+        raise HTTPException(status_code=422, detail="could not resolve a domain for this company")
+    if result.get("error") == "quota_exhausted":
+        raise HTTPException(status_code=503, detail="hunter monthly quota exhausted")
+
+    job["contacts"] = result["contacts"]
+    state.save_seen(seen)
+    return {
+        "contacts": result["contacts"],
+        "domain_guessed": result["domain_guessed"],
+        "new_contact": result["new_contact"],
+    }
 
 
 @app.get("/api/stream")

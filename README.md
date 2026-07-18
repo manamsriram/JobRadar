@@ -28,7 +28,8 @@ JobRadar polls YC company pages, custom career pages, and ATS boards for new job
 - **Multi-source scraping** — YC job boards, custom company career pages, and an off-box Playwright scraper (run via GitHub Actions) that POSTs results back through a token-authenticated ingest endpoint
 - **Funding signal watcher** — polls TechCrunch's funding RSS hourly and surfaces newly-funded startups as scraping targets
 - **Entry-level filter** — regex-based years-of-experience cap, degree+experience combo rejection, US-location matching with citizenship/sponsorship language handling
-- **AI resume-fit scoring** — uploads two resumes (backend/frontend slots), scores each match via OpenRouter's free-tier model with a daily-cap guard
+- **AI resume-fit scoring** — uploads two resumes (backend/frontend slots), scores each match via an ordered list of free-tier LLM providers (OpenRouter, Groq) with per-provider daily-cap guards and automatic fallback
+- **On-demand contact lookup** — `POST /api/jobs/{id}/contacts` fetches one hiring contact at the job's company via Hunter.io, right after you apply; per-company results are cached so re-applying to the same company costs no further credit
 - **Live dashboard** — SSE-streamed job feed with dedup, source filter, and apply-tracking
 - **Email digest** — batches matched jobs into a 4-hour digest instead of one email per match
 - **Scraper resilience** — per-source health tracking, retry with backoff, a cycle-wide retry budget, and atomic state writes with backups
@@ -80,7 +81,9 @@ cp .env.example .env
 | Variable | Purpose |
 |----------|---------|
 | `GMAIL_USER` / `GMAIL_APP_PASSWORD` / `ALERT_TO` | SMTP email digest |
-| `HUNTER_API_KEY` | Optional contact enrichment (Hunter.io free tier) |
+| `HUNTER_API_KEY` / `HUNTER_MONTHLY_CALL_CAP` | On-demand contact lookup (Hunter.io free tier, 50 credits/mo default) — fired manually per job, cached per company |
+| `AI_PROVIDERS` | Ordered fallback list for AI resume-fit scoring (default `openrouter`) |
+| `OPENROUTER_API_KEY` / `GROQ_API_KEY` | API keys per AI provider — a provider is skipped entirely if its key is unset |
 | `INGEST_TOKEN` | Shared secret authenticating the Playwright offload's `POST /api/ingest` and resume uploads |
 | `DATA_DIR` | JSON state directory (`/data` in Docker, e.g. `./data` locally) |
 | `POLL_INTERVAL_SECONDS` | Scrape poll cadence (default 300) |
@@ -111,7 +114,7 @@ Docker Compose runs the FastAPI app (with the built React frontend served same-o
 
 ## Architecture
 
-Two background loops (`poll_loop`, `funding_loop`) scrape sources and write matched jobs into shared JSON state; a third (`digest_loop`) batches matches into periodic emails. New matches also push onto an in-memory queue consumed by `GET /api/stream` (SSE) for the live dashboard. Heavier scraping (Playwright/Chromium) runs off-box as a scheduled GitHub Action and reports results back to `POST /api/ingest`, keeping the host container lightweight. Resume uploads feed `ai_match.py`, which re-reads resumes from disk per call and scores each incoming job against them through OpenRouter.
+Two background loops (`poll_loop`, `funding_loop`) scrape sources and write matched jobs into shared JSON state; a third (`digest_loop`) batches matches into periodic emails. New matches also push onto an in-memory queue consumed by `GET /api/stream` (SSE) for the live dashboard. Heavier scraping (Playwright/Chromium) runs off-box as a scheduled GitHub Action and reports results back to `POST /api/ingest`, keeping the host container lightweight. Resume uploads feed `ai_match.py`, which re-reads resumes from disk per call and scores each incoming job against them by trying providers in `AI_PROVIDERS` order until one succeeds. Contact lookup (`enricher.py`) never runs from these loops — it's triggered on demand via `POST /api/jobs/{id}/contacts`, resolving a domain (curated → URL-derived → best-effort guess), checking a per-domain cache, and only calling Hunter on a cache miss within the monthly credit budget.
 
 ## API Reference
 
@@ -120,6 +123,7 @@ Two background loops (`poll_loop`, `funding_loop`) scrape sources and write matc
 | GET | `/api/health` | Per-source scraper health; 503 if any source has failed 3+ consecutive polls |
 | GET | `/api/jobs` | Matched jobs |
 | POST | `/api/jobs/{job_id}/apply` | Mark a job applied (exempts it from purge) |
+| POST | `/api/jobs/{job_id}/contacts` | On-demand Hunter.io lookup for one hiring contact at the job's company (cached per company) |
 | GET | `/api/stream` | SSE stream of newly matched jobs |
 | POST | `/api/ingest` | Token-authenticated bulk job ingest (used by the Playwright offload) |
 | POST | `/api/resumes/{slot}` | Upload a resume (`backend` or `frontend` slot, `.txt`/`.pdf`, 2MB max) |

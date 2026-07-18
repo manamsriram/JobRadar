@@ -1,7 +1,7 @@
-"""AI second-pass match gate — OpenRouter free-tier model reads a job against
-both resumes and verifies experience/degree fit more rigorously than filter.py's
-regex can. Degrades to None (caller keeps the regex verdict) on any failure:
-missing key, HTTP error, timeout, bad JSON, or daily budget exhausted.
+"""AI second-pass match gate — tries an ordered list of OpenAI-compatible
+free-tier providers, falling through to the next when one's daily cap is hit.
+Degrades to None (caller keeps the regex verdict) once every configured
+provider is exhausted or fails: missing key, HTTP error, timeout, bad JSON.
 """
 import json
 import os
@@ -11,12 +11,29 @@ import httpx
 
 import state
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 RESUME_SLOTS = ("backend", "frontend")
-DAILY_BUDGET_FILE = state.DATA_DIR / "ai_budget.json"
-# Free tier: 50/day baseline, 1000/day once the account has ever loaded $10 in
-# credit. Default conservative; raise via env once credit is loaded.
-DAILY_CALL_CAP = int(os.getenv("AI_DAILY_CALL_CAP", "50"))
+
+# Known OpenAI-chat-completions-compatible free-tier providers. Add an entry
+# here to make a provider selectable via AI_PROVIDERS; each still needs its
+# own {NAME}_API_KEY set to actually be used.
+PROVIDER_URLS = {
+    "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+    # Free tier verified against Groq's own docs (console.groq.com/docs/rate-limits,
+    # /docs/openai): llama-3.1-8b-instant at 30 RPM / 500K tokens-per-day.
+    # DAILY_CALL_CAP default below is a conservative request-count proxy for
+    # that token budget, not an official "N calls/day" figure from Groq.
+    "groq": "https://api.groq.com/openai/v1/chat/completions",
+}
+PROVIDER_DEFAULT_MODEL = {
+    "openrouter": "google/gemma-4-31b-it:free",
+    "groq": "llama-3.1-8b-instant",
+}
+PROVIDER_DEFAULT_CAP = {
+    "openrouter": 50,
+    "groq": 100,
+}
+# Priority order, comma-separated provider names from PROVIDER_URLS.
+AI_PROVIDERS = [p.strip() for p in os.getenv("AI_PROVIDERS", "openrouter").split(",") if p.strip()]
 
 _SYSTEM_PROMPT = """You review a job posting against two resumes and judge fit.
 
@@ -36,17 +53,23 @@ def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def _budget_remaining() -> bool:
-    data = state._read_json(DAILY_BUDGET_FILE, {})
-    return data.get(_today(), 0) < DAILY_CALL_CAP
+def _budget_file(provider: str):
+    return state.DATA_DIR / f"{provider}_ai_budget.json"
 
 
-def _record_call() -> None:
-    data = state._read_json(DAILY_BUDGET_FILE, {})
+def _budget_remaining(provider: str) -> bool:
+    cap = int(os.getenv(f"{provider.upper()}_DAILY_CALL_CAP", str(PROVIDER_DEFAULT_CAP.get(provider, 50))))
+    data = state._read_json(_budget_file(provider), {})
+    return data.get(_today(), 0) < cap
+
+
+def _record_call(provider: str) -> None:
+    path = _budget_file(provider)
+    data = state._read_json(path, {})
     today = _today()
     data = {today: data.get(today, 0)}  # drop stale days, single-key file
     data[today] += 1
-    state._write_json_atomic(DAILY_BUDGET_FILE, data)
+    state._write_json_atomic(path, data)
 
 
 def _resume_path(slot: str) -> str | None:
@@ -95,46 +118,59 @@ def _parse_verdict(content: str) -> dict | None:
     return data
 
 
-async def review(job: dict) -> dict | None:
-    api_key = os.getenv("OPENROUTER_API_KEY")
+async def _call_provider(provider: str, prompt: str) -> dict | None:
+    api_key = os.getenv(f"{provider.upper()}_API_KEY")
     if not api_key:
         return None
 
-    model = os.getenv("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
-    if not model.endswith(":free"):
+    model = os.getenv(f"{provider.upper()}_MODEL", PROVIDER_DEFAULT_MODEL.get(provider, ""))
+    if provider == "openrouter" and not model.endswith(":free"):
         print(f"[ai_match] refusing non-free model id: {model}")
         return None
 
-    resumes = {slot: text for slot in RESUME_SLOTS if (text := _load_resume_text(slot))}
-    if not resumes:
-        return None
-
-    if not _budget_remaining():
+    if not _budget_remaining(provider):
         return None
 
     payload = {
         "model": model,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": _build_prompt(job, resumes)},
+            {"role": "user", "content": prompt},
         ],
         "response_format": {"type": "json_object"},
     }
     headers = {"Authorization": f"Bearer {api_key}"}
+    url = PROVIDER_URLS[provider]
 
     for attempt in range(2):
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                r = await client.post(OPENROUTER_URL, json=payload, headers=headers)
-            _record_call()
+                r = await client.post(url, json=payload, headers=headers)
+            _record_call(provider)
             if r.status_code >= 500 and attempt == 0:
                 continue
             r.raise_for_status()
             content = r.json()["choices"][0]["message"]["content"]
             return _parse_verdict(content)
         except (httpx.HTTPError, KeyError, IndexError) as e:
-            print(f"[ai_match] request failed: {e}")
+            print(f"[ai_match] {provider} request failed: {e}")
             if attempt == 0:
                 continue
             return None
+    return None
+
+
+async def review(job: dict) -> dict | None:
+    resumes = {slot: text for slot in RESUME_SLOTS if (text := _load_resume_text(slot))}
+    if not resumes:
+        return None
+
+    prompt = _build_prompt(job, resumes)
+    for provider in AI_PROVIDERS:
+        if provider not in PROVIDER_URLS:
+            print(f"[ai_match] unknown provider in AI_PROVIDERS: {provider}")
+            continue
+        verdict = await _call_provider(provider, prompt)
+        if verdict is not None:
+            return verdict
     return None

@@ -10,9 +10,10 @@ Phase 2 split: this process never launches a browser. JS-rendered sources
 Action running scrapers/playwright_scraper.py, which POSTs results to
 /api/ingest — see .github/workflows/playwright_scraper.yml.
 
-Matched jobs are enriched (tier-1 only), pushed to the live SSE feed, emailed,
-and persisted to /data. Every source failure is caught and logged so one bad
-page never kills a cycle.
+Matched jobs are pushed to the live SSE feed, emailed, and persisted to
+/data. Contact enrichment is on-demand only (POST /api/jobs/{id}/contacts in
+main.py), never fired from this loop. Every source failure is caught and
+logged so one bad page never kills a cycle.
 """
 import asyncio
 import random
@@ -34,7 +35,6 @@ from config import (
     POLL_INTERVAL_SECONDS,
     PURGE_AFTER_DAYS,
 )
-from enricher import find_contacts
 from fetch import RetryBudget, fetch_with_retry
 from filter import matches
 from notifier import send_digest_alert
@@ -178,7 +178,6 @@ async def _gather_sources(
 async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mode: bool) -> None:
     by_name = {c.get("name", "").lower(): c for c in companies}
     alias_map = state.load_company_aliases()
-    contacts_cache: dict[str, list] = {}  # per-cycle, per-domain
     for job in state.get_new_jobs(seen, jobs):
         job["scraped_at"] = _now()
         if not job.get("posted_at"):
@@ -206,11 +205,6 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
         if job["matched"]:
             company = by_name.get(job.get("company", "").lower())
             job["low_confidence"] = trust.score_posting(job, company)
-            domain = company.get("domain") if company else None
-            if company and company.get("tier") == 1 and domain:
-                if domain not in contacts_cache:
-                    contacts_cache[domain] = await find_contacts(domain)
-                job["contacts"] = contacts_cache[domain]
             if not seed_mode:
                 _push_live(job)
                 _pending_alerts.append(job)
