@@ -8,7 +8,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -17,6 +17,9 @@ from filter import matches
 from scraper import digest_loop, funding_loop, new_jobs_queue, poll_loop
 
 FRONTEND_DIST = "frontend/dist"
+RESUME_SLOTS = ("backend", "frontend")
+RESUME_EXTENSIONS = {".txt", ".pdf"}
+RESUME_MAX_BYTES = 2 * 1024 * 1024
 
 
 @asynccontextmanager
@@ -108,6 +111,57 @@ async def ingest(request: Request, x_ingest_token: str = Header(default="")):
         added += 1
     state.save_seen(seen)
     return {"ingested": added}
+
+
+# ---- Resume uploads (ai_match.py reads these fresh from disk per call) ----
+# Reuses the /api/ingest shared secret — one token per deployment.
+def _check_resume_token(x_resume_token: str) -> None:
+    token = os.getenv("INGEST_TOKEN")
+    if not token or x_resume_token != token:
+        raise HTTPException(status_code=401, detail="invalid resume token")
+
+
+@app.post("/api/resumes/{slot}")
+async def upload_resume(
+    slot: str, file: UploadFile, x_resume_token: str = Header(default="")
+):
+    if slot not in RESUME_SLOTS:
+        raise HTTPException(status_code=400, detail="slot must be 'backend' or 'frontend'")
+    _check_resume_token(x_resume_token)
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in RESUME_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="only .txt and .pdf resumes are accepted")
+
+    body = await file.read()
+    if len(body) > RESUME_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="resume exceeds 2MB limit")
+
+    state.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # Drop any stale file for this slot under a different extension so
+    # ai_match's loader (which probes .txt then .pdf) never reads two versions.
+    for other_ext in RESUME_EXTENSIONS:
+        (state.DATA_DIR / f"resume_{slot}{other_ext}").unlink(missing_ok=True)
+
+    dest = state.DATA_DIR / f"resume_{slot}{ext}"
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    tmp.write_bytes(body)
+    os.replace(tmp, dest)
+
+    meta_path = state.DATA_DIR / "resume_meta.json"
+    meta = state._read_json(meta_path, {})
+    meta[slot] = {
+        "filename": file.filename,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    state._write_json_atomic(meta_path, meta)
+    return {"ok": True, "slot": slot}
+
+
+@app.get("/api/resumes")
+async def resume_status():
+    meta = state._read_json(state.DATA_DIR / "resume_meta.json", {})
+    return {slot: meta.get(slot) for slot in RESUME_SLOTS}
 
 
 # Serve the built React frontend (only if present — absent during backend-only dev).

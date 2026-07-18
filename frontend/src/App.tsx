@@ -3,6 +3,7 @@ import { useSSE, type Job } from "./hooks/useSSE";
 import JobTable from "./components/JobTable";
 import FilterBar from "./components/FilterBar";
 import LiveBadge from "./components/LiveBadge";
+import ResumePanel from "./components/ResumePanel";
 
 // Same-origin in prod (static build); Vite proxies /api to :8000 in dev.
 export default function App() {
@@ -39,6 +40,7 @@ export default function App() {
         <h1 className="text-2xl font-bold">JobRadar</h1>
         <LiveBadge count={liveJobs.length} />
       </div>
+      <ResumePanel />
       <FilterBar filters={filters} onChange={setFilters} />
       <JobTable jobs={filtered} />
     </div>

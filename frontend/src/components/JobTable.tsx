@@ -40,6 +40,7 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
           <th className="p-2">Location</th>
           <th className="p-2">Source</th>
           <th className="p-2">Posted</th>
+          <th className="p-2">Fit</th>
           <th className="p-2">Apply</th>
           <th className="p-2">Applied?</th>
         </tr>
@@ -65,6 +66,16 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
                   {job.posted_at
                     ? new Date(job.posted_at).toLocaleDateString()
                     : "—"}
+                </td>
+                <td className="p-2">
+                  {job.ai_score != null && (
+                    <span
+                      className="inline-block px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs"
+                      title={job.ai_reason ?? ""}
+                    >
+                      {job.ai_score}/100 · {job.ai_resume}
+                    </span>
+                  )}
                 </td>
                 <td className="p-2">
                   <a
@@ -97,7 +108,7 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
                 (job.description ||
                   (job.contacts && job.contacts.length > 0)) && (
                   <tr>
-                    <td colSpan={7} className="bg-gray-50 px-4 py-2">
+                    <td colSpan={8} className="bg-gray-50 px-4 py-2">
                       {job.description && (
                         <p className="text-gray-600 whitespace-pre-line mb-3 max-h-60 overflow-y-auto">
                           {job.description}

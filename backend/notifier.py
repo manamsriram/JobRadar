@@ -25,6 +25,10 @@ def _format_body(job: dict) -> str:
         f"Posted:   {job.get('posted_at') or '—'}",
         f"Apply:    {job.get('url', '')}",
     ]
+    if job.get("ai_score") is not None:
+        lines.append(
+            f"Fit:      {job['ai_score']}/100 ({job.get('ai_resume', '?')} resume) — {job.get('ai_reason', '')}"
+        )
     for c in job.get("contacts") or []:
         parts = [f"{c.get('name', '')} ({c.get('title', '')})"]
         if c.get("email"):

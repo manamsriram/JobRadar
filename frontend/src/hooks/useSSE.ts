@@ -19,6 +19,9 @@ export interface Job {
   matched?: boolean;
   applied?: boolean;
   contacts?: Contact[];
+  ai_score?: number;
+  ai_resume?: "backend" | "frontend";
+  ai_reason?: string;
 }
 
 /**
