@@ -157,6 +157,43 @@ async def _scrape_company(company: dict, budget: RetryBudget | None = None) -> t
     return await _fetch_plain(name, url, retries=retries)
 
 
+def _promote_funding_company(entry: dict, jobs: list[dict], companies: list[dict]) -> list[dict] | None:
+    """A funding-queue entry that yields a matched job is worth keeping
+    permanently instead of re-scraping it out of the ephemeral queue forever.
+    Returns the updated companies list if a new row was appended, else None
+    (no match, missing fields, or already present).
+
+    tier 2 / requires_js False: matches how funding entries are actually
+    scraped today (_fetch_plain, no browser) — see _scrape_company.
+    """
+    if not any(j.get("matched") for j in jobs):
+        return None
+    name, domain, url = entry.get("company"), entry.get("domain"), entry.get("careers_url")
+    if not name or not domain or not url:
+        return None
+    name_l, domain_l = name.lower(), domain.lower()
+    if any(
+        c.get("name", "").lower() == name_l or c.get("domain", "").lower() == domain_l
+        for c in companies
+    ):
+        return None
+    companies = companies + [{
+        "name": name, "source": "custom", "careers_url": url,
+        "domain": domain, "tier": 2, "requires_js": False,
+    }]
+    state.save_companies(companies)
+    print(f"[scraper] promoted {name} to companies.json")
+    return companies
+
+
+def _drop_promoted_from_queue(queue: list[dict], companies: list[dict]) -> list[dict]:
+    """Entries already promoted to companies.json (poll_loop's
+    _promote_funding_company) are self-identifying by domain — no cross-loop
+    flag needed. Keeps funding_queue.json single-writer (funding_loop only)."""
+    promoted_domains = {c.get("domain", "").lower() for c in companies}
+    return [e for e in queue if (e.get("domain") or "").lower() not in promoted_domains]
+
+
 async def _gather_sources(
     companies: list[dict], budget: RetryBudget, health: dict[str, bool]
 ) -> list[dict]:
@@ -237,6 +274,9 @@ async def poll_loop() -> None:
                 if ok is not None:
                     health_updates[f"funding:{entry.get('company', 'Funded')}"] = ok
                 await _process(found, seen, companies, seed_mode)
+                promoted = _promote_funding_company(entry, found, companies)
+                if promoted is not None:
+                    companies = promoted
 
             health = state.load_health()
             for source, ok in health_updates.items():
@@ -296,6 +336,8 @@ async def funding_loop() -> None:
                 if not domain:
                     continue
                 entry["careers_url"] = await discover_careers_url(domain)
+
+            queue = _drop_promoted_from_queue(queue, state.load_companies())
             state.save_funding_queue(queue)
         except Exception as e:
             print(f"[scraper] funding loop failed: {e}")

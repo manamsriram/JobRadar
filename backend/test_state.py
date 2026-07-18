@@ -106,6 +106,21 @@ def test_load_company_aliases_defaults_empty(tmp_path, monkeypatch):
     assert state.load_company_aliases() == {}
 
 
+def test_save_companies_roundtrips(tmp_path, monkeypatch):
+    monkeypatch.setattr(state, "COMPANIES_FILE", tmp_path / "companies.json")
+    companies = [{"name": "Acme", "domain": "acme.com"}]
+    state.save_companies(companies)
+    assert state.load_companies() == companies
+
+
+def test_save_companies_writes_backup_on_second_save(tmp_path, monkeypatch):
+    monkeypatch.setattr(state, "COMPANIES_FILE", tmp_path / "companies.json")
+    state.save_companies([{"name": "Acme"}])
+    state.save_companies([{"name": "Acme"}, {"name": "Second"}])
+    backups = list(tmp_path.glob("companies.json.*.bak"))
+    assert len(backups) == 1
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-q"]))

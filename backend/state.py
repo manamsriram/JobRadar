@@ -120,6 +120,13 @@ def load_companies() -> list[dict]:
     return _read_json(COMPANIES_FILE, [])
 
 
+def save_companies(companies: list[dict]) -> None:
+    """Backed up like seen_jobs.json: this file is now written from
+    regex/headline-derived data (funding-signal promotion), so a bad write
+    should be one revert away, not a manual re-type of the curated rows."""
+    _write_json_atomic_with_backup(COMPANIES_FILE, companies)
+
+
 # ---- Company alias canonicalization (finding #6) ----
 # ATS org-name vs. curated brand-name drift (Greenhouse/Lever/Ashby board slugs,
 # YC's href-derived slug) breaks anything keyed by company name — health
