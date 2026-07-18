@@ -76,12 +76,15 @@ def get_new_jobs(seen: dict, fetched: list[dict]) -> list[dict]:
 
 
 def purge_old(seen: dict, days: int) -> dict:
-    """Drop jobs first scraped more than `days` calendar days ago. Applied jobs
-    are always kept. Returns the pruned dict (caller persists it)."""
+    """Drop jobs first scraped more than `days` calendar days ago. Applied and
+    matched jobs are always kept — purging a still-live matched job (YC
+    postings stay listed for weeks, well past PURGE_AFTER_DAYS) made
+    get_new_jobs() treat it as brand new on the next cycle and re-alert on
+    the same posting over and over. Returns the pruned dict (caller persists it)."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     kept = {}
     for jid, job in seen.items():
-        if job.get("applied"):
+        if job.get("applied") or job.get("matched"):
             kept[jid] = job
             continue
         ts = job.get("scraped_at")

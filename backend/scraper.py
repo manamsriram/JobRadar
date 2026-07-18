@@ -22,6 +22,7 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
+import ai_match
 import aliases
 import state
 import trust
@@ -37,7 +38,7 @@ from enricher import find_contacts
 from fetch import RetryBudget, fetch_with_retry
 from filter import matches
 from notifier import send_digest_alert
-from scrapers.yc_scraper import fetch_yc
+from scrapers.yc_scraper import fetch_yc, fetch_yc_description
 from signals.careers_discovery import discover_careers_url
 from signals.funding_watcher import check_funding, resolve_domain_from_article
 
@@ -183,7 +184,24 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
         if not job.get("posted_at"):
             job["posted_at"] = job["scraped_at"]
         job["company"] = aliases.canonicalize_company(job.get("company", ""), alias_map)
+        if job.get("source") == "yc" and not job.get("description") and job.get("url"):
+            job["description"] = await fetch_yc_description(job["url"])
         job["matched"] = matches(job)
+
+        # AI second-pass gate: regex only catches years-of-experience mentions
+        # that fit a fixed pattern, so it still lets some over-experienced
+        # roles through. Only worth calling when there's real description text
+        # to reason over, and never during seed_mode (would burn the whole
+        # daily call budget on the first-ever run's backlog).
+        if job["matched"] and not seed_mode and len(job.get("description", "")) > 100:
+            verdict = await ai_match.review(job)
+            if verdict is not None:
+                if verdict["verdict"] == "reject":
+                    job["matched"] = False
+                else:
+                    job["ai_score"] = verdict.get("score")
+                    job["ai_resume"] = verdict.get("resume")
+                    job["ai_reason"] = verdict.get("reason")
 
         if job["matched"]:
             company = by_name.get(job.get("company", "").lower())

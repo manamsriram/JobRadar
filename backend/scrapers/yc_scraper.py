@@ -19,6 +19,24 @@ _UA = (
 _URL = "https://www.ycombinator.com/jobs/role/software-engineer"
 
 
+async def fetch_yc_description(url: str, retries: int = 1) -> str:
+    """Best-effort job-detail body text. YC listing pages carry no description
+    (title/company/href only), so the years-of-experience body check in
+    filter.py was silently skipped for every YC job — a "3+ years" requirement
+    buried in the JD, rather than the title, passed straight through. Called
+    only for newly-seen jobs (see scraper._process), so the extra request is
+    bounded to genuinely new postings, not the full listing every cycle."""
+    await asyncio.sleep(random.uniform(0.5, 1.5))
+    try:
+        async with httpx.AsyncClient(headers={"User-Agent": _UA}) as client:
+            r = await fetch_with_retry(client, url, retries=retries)
+    except httpx.HTTPError as e:
+        print(f"[yc_scraper] description fetch error for {url}: {e}")
+        return ""
+    soup = BeautifulSoup(r.text, "html.parser")
+    return soup.get_text(" ", strip=True)
+
+
 async def fetch_yc(retries: int = 2) -> tuple[list[dict], bool]:
     """Returns (jobs, ok) — ok is False only on a fetch-level failure, not on
     zero jobs found, so callers can feed it straight into source-health tracking."""
