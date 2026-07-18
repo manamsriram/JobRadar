@@ -25,6 +25,7 @@ FUNDING_QUEUE_FILE = DATA_DIR / "funding_queue.json"
 SEEN_FUNDING_FILE = DATA_DIR / "seen_funding.json"
 SOURCE_HEALTH_FILE = DATA_DIR / "source_health.json"
 COMPANY_ALIASES_FILE = DATA_DIR / "company_aliases.json"
+VISA_SPONSOR_SEEDS_FILE = DATA_DIR / "visa_sponsor_seeds.json"
 BACKUP_KEEP = 3
 
 
@@ -125,6 +126,11 @@ def save_companies(companies: list[dict]) -> None:
     regex/headline-derived data (funding-signal promotion), so a bad write
     should be one revert away, not a manual re-type of the curated rows."""
     _write_json_atomic_with_backup(COMPANIES_FILE, companies)
+
+
+# ---- Visa-sponsor seed list (hand-edited, same schema as companies.json) ----
+def load_visa_sponsor_seeds() -> list[dict]:
+    return _read_json(VISA_SPONSOR_SEEDS_FILE, [])
 
 
 # ---- Company alias canonicalization (finding #6) ----

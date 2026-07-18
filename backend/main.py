@@ -15,7 +15,8 @@ from fastapi.staticfiles import StaticFiles
 import enricher
 import state
 from filter import matches
-from scraper import digest_loop, funding_loop, new_jobs_queue, poll_loop
+from scraper import digest_loop, funding_loop, new_jobs_queue, poll_loop, visa_sponsor_loop
+from signals import visa_sponsors
 
 FRONTEND_DIST = "frontend/dist"
 RESUME_SLOTS = ("backend", "frontend")
@@ -25,10 +26,14 @@ RESUME_MAX_BYTES = 2 * 1024 * 1024
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Run once at startup (not just on the weekly visa_sponsor_loop timer) so
+    # all seeded companies are live immediately instead of after the first interval.
+    await visa_sponsors.merge_seed_companies(state.load_companies())
     tasks = [
         asyncio.create_task(poll_loop()),
         asyncio.create_task(funding_loop()),
         asyncio.create_task(digest_loop()),
+        asyncio.create_task(visa_sponsor_loop()),
     ]
     try:
         yield

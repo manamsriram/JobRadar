@@ -34,11 +34,13 @@ from config import (
     FUNDING_CHECK_INTERVAL,
     POLL_INTERVAL_SECONDS,
     PURGE_AFTER_DAYS,
+    VISA_SPONSOR_CHECK_INTERVAL,
 )
 from fetch import RetryBudget, fetch_with_retry
 from filter import matches
 from notifier import send_digest_alert
 from scrapers.yc_scraper import fetch_yc, fetch_yc_description
+from signals import visa_sponsors
 from signals.careers_discovery import discover_careers_url
 from signals.funding_watcher import check_funding, resolve_domain_from_article
 
@@ -308,6 +310,19 @@ async def digest_loop() -> None:
             await send_digest_alert(batch)
         except Exception as e:
             print(f"[scraper] digest loop failed: {e}")
+
+
+async def visa_sponsor_loop() -> None:
+    """Re-diffs data/visa_sponsor_seeds.json against companies.json weekly —
+    picks up rows a user has added to the seed file since the last check.
+    No live discovery for seeded rows (they carry a hardcoded careers_url);
+    see signals/visa_sponsors.py for why."""
+    while True:
+        await asyncio.sleep(VISA_SPONSOR_CHECK_INTERVAL)
+        try:
+            await visa_sponsors.merge_seed_companies(state.load_companies())
+        except Exception as e:
+            print(f"[scraper] visa sponsor loop failed: {e}")
 
 
 async def funding_loop() -> None:

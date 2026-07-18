@@ -61,6 +61,8 @@ MAX_YEARS_EXPERIENCE = int(os.getenv("MAX_YEARS_EXPERIENCE", "2"))
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))
 # TechCrunch funding RSS is polled hourly — new funding rarely lands faster.
 FUNDING_CHECK_INTERVAL = int(os.getenv("FUNDING_CHECK_INTERVAL", "3600"))
+# Visa-sponsor seed list barely changes — weekly re-diff is plenty.
+VISA_SPONSOR_CHECK_INTERVAL = int(os.getenv("VISA_SPONSOR_CHECK_INTERVAL", str(7 * 24 * 3600)))
 # Email digest cadence — batches matches instead of one email per job.
 ALERT_INTERVAL_SECONDS = int(os.getenv("ALERT_INTERVAL_SECONDS", str(4 * 3600)))
 ALERT_DIGEST_SIZE = int(os.getenv("ALERT_DIGEST_SIZE", "5"))
