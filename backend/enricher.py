@@ -20,13 +20,18 @@ import state
 
 CONTACTS_CACHE_FILE = state.DATA_DIR / "company_contacts.json"
 
-# Job-board/ATS hosts are never the employer's own domain — reject them
-# outright rather than mistaking a Greenhouse/Lever/Ashby board URL for it.
+# ATS boards and job aggregators are never the employer's own domain — reject
+# them outright rather than mistaking e.g. a levels.fyi/YC listing URL for the
+# posting company's site (levels.fyi and ycombinator.com surface jobs for any
+# company, so trusting their host as "the employer's domain" attributes the
+# contact lookup to the aggregator, not the actual company).
 _ATS_HOSTS = {
     "greenhouse.io", "boards.greenhouse.io", "job-boards.greenhouse.io",
     "lever.co", "jobs.lever.co",
     "ashbyhq.com", "jobs.ashbyhq.com",
     "myworkdayjobs.com", "linkedin.com", "indeed.com",
+    "levels.fyi", "ycombinator.com", "wellfound.com", "angel.co",
+    "builtin.com", "glassdoor.com", "ziprecruiter.com",
 }
 
 

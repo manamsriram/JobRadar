@@ -66,6 +66,18 @@ def test_resolve_domain_rejects_ats_host(monkeypatch):
     assert guessed is True
 
 
+def test_resolve_domain_rejects_job_aggregator_host(monkeypatch):
+    # Regression: an uncurated company's levels.fyi/YC listing URL must never
+    # be trusted as that company's own domain (found contact at the wrong
+    # company when Robinhood's levels.fyi listing resolved to levels.fyi).
+    monkeypatch.setattr(state, "load_companies", lambda: [])
+    domain, guessed = enricher.resolve_domain(
+        "Robinhood", "https://www.levels.fyi/jobs?jobId=143957004484780742"
+    )
+    assert domain == "robinhood.com"
+    assert guessed is True
+
+
 def test_resolve_domain_slug_fallback(monkeypatch):
     monkeypatch.setattr(state, "load_companies", lambda: [])
     domain, guessed = enricher.resolve_domain("Some Co!", None)
