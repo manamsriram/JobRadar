@@ -20,7 +20,7 @@ def test_custom_source_domain_mismatch_flagged():
     job = {"url": "https://sketchy-clone.example/jobs/1", "source": "custom"}
     company = {"domain": "plaid.com"}
     reason = trust.score_posting(job, company)
-    assert reason is not None and "plaid.com" in reason
+    assert reason == "url host sketchy-clone.example doesn't match company domain plaid.com"
 
 
 def test_custom_source_matching_domain_not_flagged():

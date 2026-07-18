@@ -8,7 +8,10 @@ from config import (
     ROLE_FILTERS,
 )
 
-_YEARS_RE = re.compile(r"(\d+)\s*\+?\s*(?:-|to)?\s*(\d+)?\s*\+?\s*years?")
+# Whitespace runs are bounded (\s{0,3}) rather than \s* so the matcher can't
+# be driven into polynomial backtracking by long runs of whitespace with no
+# trailing "year(s)" to anchor on.
+_YEARS_RE = re.compile(r"(\d+)\s{0,3}\+?\s{0,3}(?:-|to)?\s{0,3}(\d+)?\s{0,3}\+?\s{0,3}years?")
 
 
 def _max_years_required(text: str) -> int:

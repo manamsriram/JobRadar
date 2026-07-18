@@ -127,11 +127,15 @@ async def upload_resume(
 ):
     if slot not in RESUME_SLOTS:
         raise HTTPException(status_code=400, detail="slot must be 'backend' or 'frontend'")
+    # Re-literalize from the allowlist instead of reusing the request value,
+    # so the path built below is provably not attacker-controlled.
+    slot = "backend" if slot == "backend" else "frontend"
     _check_resume_token(x_resume_token)
 
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in RESUME_EXTENSIONS:
         raise HTTPException(status_code=400, detail="only .txt and .pdf resumes are accepted")
+    ext = ".pdf" if ext == ".pdf" else ".txt"
 
     body = await file.read()
     if len(body) > RESUME_MAX_BYTES:

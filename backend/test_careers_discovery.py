@@ -55,7 +55,7 @@ def test_discover_careers_url_prepends_scheme_when_missing(monkeypatch):
 
     result = asyncio.run(cd.discover_careers_url("acme.com"))
 
-    assert result.startswith("https://acme.com")
+    assert result == "https://acme.com/careers"
 
 
 def test_discover_careers_url_returns_none_when_all_paths_miss(monkeypatch):
