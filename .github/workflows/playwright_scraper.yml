@@ -30,6 +30,9 @@ jobs:
           playwright install chromium --with-deps
       - name: Scrape
         working-directory: backend
+        env:
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
         run: python -m scrapers.playwright_scraper --companies ../data/companies.json --output jobs.json
       - name: POST to /api/ingest
         env:

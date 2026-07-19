@@ -134,9 +134,7 @@ async def stream_jobs():
 # Auth via the INGEST_TOKEN shared secret.
 @app.post("/api/ingest")
 async def ingest(request: Request, x_ingest_token: str = Header(default="")):
-    token = os.getenv("INGEST_TOKEN")
-    if not token or x_ingest_token != token:
-        raise HTTPException(status_code=401, detail="invalid ingest token")
+    _check_ingest_token(x_ingest_token)
     incoming = await request.json()
     if not isinstance(incoming, list) or not all(
         isinstance(j, dict) and isinstance(j.get("id"), str) for j in incoming
@@ -154,6 +152,36 @@ async def ingest(request: Request, x_ingest_token: str = Header(default="")):
         added += 1
     state.save_seen(seen)
     return {"ingested": added}
+
+
+# ---- Adaptive link-pattern sync (scrapers/playwright_scraper.py) ----
+# The GH Action runner has no /data volume, so it borrows the host's learned
+# job-link prefixes (see adaptive.py) through these instead of keeping its
+# own copy. Same shared secret as /api/ingest.
+def _check_ingest_token(x_ingest_token: str) -> None:
+    token = os.getenv("INGEST_TOKEN")
+    if not token or x_ingest_token != token:
+        raise HTTPException(status_code=401, detail="invalid ingest token")
+
+
+@app.get("/api/link-patterns")
+async def get_link_patterns(x_ingest_token: str = Header(default="")):
+    _check_ingest_token(x_ingest_token)
+    return state.load_link_patterns()
+
+
+@app.post("/api/link-patterns")
+async def update_link_patterns(request: Request, x_ingest_token: str = Header(default="")):
+    _check_ingest_token(x_ingest_token)
+    incoming = await request.json()
+    if not isinstance(incoming, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in incoming.items()
+    ):
+        raise HTTPException(status_code=400, detail="expected a company->prefix string mapping")
+    patterns = state.load_link_patterns()
+    patterns.update(incoming)
+    state.save_link_patterns(patterns)
+    return {"ok": True, "updated": len(incoming)}
 
 
 # ---- Resume uploads (ai_match.py reads these fresh from disk per call) ----

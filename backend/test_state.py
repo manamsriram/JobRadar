@@ -121,6 +121,13 @@ def test_save_companies_writes_backup_on_second_save(tmp_path, monkeypatch):
     assert len(backups) == 1
 
 
+def test_link_patterns_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr(state, "LINK_PATTERNS_FILE", tmp_path / "link_patterns.json")
+    assert state.load_link_patterns() == {}
+    state.save_link_patterns({"Acme": "/jobs"})
+    assert state.load_link_patterns() == {"Acme": "/jobs"}
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-q"]))
