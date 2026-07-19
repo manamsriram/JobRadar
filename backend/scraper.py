@@ -16,6 +16,7 @@ main.py), never fired from this loop. Every source failure is caught and
 logged so one bad page never kills a cycle.
 """
 import asyncio
+import hashlib
 import random
 from datetime import datetime, timezone
 from urllib.parse import urljoin
@@ -23,6 +24,7 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
+import adaptive
 import ai_match
 import aliases
 import state
@@ -75,6 +77,26 @@ def _push_live(job: dict) -> None:
             pass
 
 
+def _extract_jobs(anchors, company: str, base_url: str) -> list[dict]:
+    jobs, seen_hrefs = [], set()
+    for a in anchors:
+        href = a.get("href", "")
+        if not href or href in seen_hrefs:
+            continue
+        title = _real_title(a, href)
+        if not title or len(title) < 5:
+            continue
+        seen_hrefs.add(href)
+        full = urljoin(base_url, href)
+        uid = hashlib.md5(full.encode()).hexdigest()[:12]
+        jobs.append({
+            "id": f"custom_{company.lower()}_{uid}",
+            "title": title, "company": company, "location": _nearby_location(a),
+            "url": full, "source": "custom", "posted_at": None, "description": "",
+        })
+    return jobs
+
+
 async def _fetch_plain(company: str, url: str, retries: int = 2) -> tuple[list[dict], bool]:
     """Scrape a server-rendered career page with httpx + BS4 (no browser).
     Returns (jobs, ok) — ok is False only on a fetch-level failure, never on
@@ -87,26 +109,32 @@ async def _fetch_plain(company: str, url: str, retries: int = 2) -> tuple[list[d
         print(f"[scraper] error fetching {company} ({url}): {e}")
         return [], False
     soup = BeautifulSoup(r.text, "html.parser")
-    # Broken selector? Most plain career pages link roles via /jobs//careers/
-    # anchors. If empty for a real company, add a per-company selector override.
+    # Most plain career pages link roles via /jobs//careers//position anchors.
     anchors = soup.select("a[href*='/job'], a[href*='/career'], a[href*='/position']")
-    jobs, seen_hrefs = [], set()
-    import hashlib
-    for a in anchors:
-        href = a.get("href", "")
-        if not href or href in seen_hrefs:
-            continue
-        title = _real_title(a, href)
-        if not title or len(title) < 5:
-            continue
-        seen_hrefs.add(href)
-        full = urljoin(url, href)
-        uid = hashlib.md5(full.encode()).hexdigest()[:12]
-        jobs.append({
-            "id": f"custom_{company.lower()}_{uid}",
-            "title": title, "company": company, "location": _nearby_location(a),
-            "url": full, "source": "custom", "posted_at": None, "description": "",
-        })
+    jobs = _extract_jobs(anchors, company, url)
+
+    if not jobs:
+        # Broken selector (markup drift outside the fixed keyword list)?
+        # Retry against this company's last-known-good link pattern instead
+        # of giving up outright — see adaptive.py.
+        prefix = state.load_link_patterns().get(company)
+        if prefix:
+            all_anchors = soup.find_all("a", href=True)
+            wanted = set(adaptive.fallback_hrefs([a["href"] for a in all_anchors], prefix))
+            fallback_anchors = [a for a in all_anchors if a["href"] in wanted]
+            jobs = _extract_jobs(fallback_anchors, company, url)
+            if jobs:
+                print(f"[scraper] adaptive fallback recovered {len(jobs)} job(s) "
+                      f"for {company} via prefix {prefix}")
+
+    if jobs:
+        learned = adaptive.learn_prefix([j["url"] for j in jobs])
+        if learned:
+            patterns = state.load_link_patterns()
+            if patterns.get(company) != learned:
+                patterns[company] = learned
+                state.save_link_patterns(patterns)
+
     return jobs, True
 
 

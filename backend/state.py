@@ -27,6 +27,7 @@ SOURCE_HEALTH_FILE = DATA_DIR / "source_health.json"
 COMPANY_ALIASES_FILE = DATA_DIR / "company_aliases.json"
 VISA_SPONSOR_SEEDS_FILE = DATA_DIR / "visa_sponsor_seeds.json"
 DISCOVERY_COUNTS_FILE = DATA_DIR / "discovery_counts.json"
+LINK_PATTERNS_FILE = DATA_DIR / "link_patterns.json"
 BACKUP_KEEP = 3
 
 
@@ -169,6 +170,18 @@ def load_discovery_counts() -> dict:
 
 def save_discovery_counts(counts: dict) -> None:
     _write_json_atomic(DISCOVERY_COUNTS_FILE, counts)
+
+
+# ---- Adaptive selector fallback (adaptive.py) ----
+# company -> learned job-link path prefix (e.g. "/jobs"), refreshed on every
+# scrape that finds jobs via the primary keyword selector. Consulted only
+# when the primary selector returns zero anchors (candidate markup drift).
+def load_link_patterns() -> dict:
+    return _read_json(LINK_PATTERNS_FILE, {})
+
+
+def save_link_patterns(patterns: dict) -> None:
+    _write_json_atomic(LINK_PATTERNS_FILE, patterns)
 
 
 # ---- Source health (finding #1) ----
