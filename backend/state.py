@@ -26,6 +26,7 @@ SEEN_FUNDING_FILE = DATA_DIR / "seen_funding.json"
 SOURCE_HEALTH_FILE = DATA_DIR / "source_health.json"
 COMPANY_ALIASES_FILE = DATA_DIR / "company_aliases.json"
 VISA_SPONSOR_SEEDS_FILE = DATA_DIR / "visa_sponsor_seeds.json"
+DISCOVERY_COUNTS_FILE = DATA_DIR / "discovery_counts.json"
 BACKUP_KEEP = 3
 
 
@@ -157,6 +158,17 @@ def load_seen_funding() -> set:
 
 def save_seen_funding(ids: set) -> None:
     _write_json_atomic(SEEN_FUNDING_FILE, sorted(ids))
+
+
+# ---- Auto-discovery YC-frequency counts (signals/company_discovery.py) ----
+# name (normalized) -> number of poll cycles seen in. Persisted so the
+# 2-cycle threshold survives a restart instead of resetting to 0.
+def load_discovery_counts() -> dict:
+    return _read_json(DISCOVERY_COUNTS_FILE, {})
+
+
+def save_discovery_counts(counts: dict) -> None:
+    _write_json_atomic(DISCOVERY_COUNTS_FILE, counts)
 
 
 # ---- Source health (finding #1) ----
