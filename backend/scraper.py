@@ -241,12 +241,16 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
                     job["ai_resume"] = verdict.get("resume")
                     job["ai_reason"] = verdict.get("reason")
 
-        if job["matched"]:
-            company = by_name.get(job.get("company", "").lower())
-            job["low_confidence"] = trust.score_posting(job, company)
-            if not seed_mode:
-                _push_live(job)
-                _pending_alerts.append(job)
+        # Unmatched jobs are dropped immediately rather than persisted and
+        # purged later — they're cheaply re-evaluated next cycle if the
+        # source still lists them.
+        if not job["matched"]:
+            continue
+        company = by_name.get(job.get("company", "").lower())
+        job["low_confidence"] = trust.score_posting(job, company)
+        if not seed_mode:
+            _push_live(job)
+            _pending_alerts.append(job)
         seen[job["id"]] = job
 
 

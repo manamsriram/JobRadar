@@ -44,6 +44,13 @@ def test_purge_old_keeps_fresh_jobs():
     assert state.purge_old(seen, days=3) == seen
 
 
+def test_purge_old_drops_stale_matched_unapplied():
+    # Only "applied" is exempt now — a matched job the user never applied to
+    # ages out like anything else once past the window.
+    seen = {"a": {"scraped_at": _now_iso(30), "matched": True}}
+    assert state.purge_old(seen, days=3) == {}
+
+
 def test_get_matched_filters_and_sorts_newest_first():
     seen = {
         "a": {"matched": True, "posted_at": _now_iso(2)},
@@ -52,6 +59,37 @@ def test_get_matched_filters_and_sorts_newest_first():
     }
     result = state.get_matched(seen)
     assert [j["posted_at"] for j in result] == [seen["b"]["posted_at"], seen["a"]["posted_at"]]
+
+
+def test_get_matched_excludes_applied():
+    seen = {
+        "a": {"matched": True, "applied": True, "posted_at": _now_iso(0)},
+        "b": {"matched": True, "posted_at": _now_iso(1)},
+    }
+    result = state.get_matched(seen)
+    assert result == [seen["b"]]
+
+
+def test_get_applied_filters_and_sorts_newest_first():
+    seen = {
+        "a": {"matched": True, "applied": True, "posted_at": _now_iso(2)},
+        "b": {"matched": True, "applied": True, "posted_at": _now_iso(0)},
+        "c": {"matched": True, "posted_at": _now_iso(0)},
+    }
+    result = state.get_applied(seen)
+    assert [j["posted_at"] for j in result] == [seen["b"]["posted_at"], seen["a"]["posted_at"]]
+
+
+def test_delete_job_removes_existing():
+    seen = {"a": {"applied": True}}
+    assert state.delete_job(seen, "a") is True
+    assert seen == {}
+
+
+def test_delete_job_returns_false_for_unknown():
+    seen = {"a": {}}
+    assert state.delete_job(seen, "nope") is False
+    assert seen == {"a": {}}
 
 
 def test_read_json_missing_file_returns_default(tmp_path):

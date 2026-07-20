@@ -79,15 +79,16 @@ def get_new_jobs(seen: dict, fetched: list[dict]) -> list[dict]:
 
 
 def purge_old(seen: dict, days: int) -> dict:
-    """Drop jobs first scraped more than `days` calendar days ago. Applied and
-    matched jobs are always kept — purging a still-live matched job (YC
-    postings stay listed for weeks, well past PURGE_AFTER_DAYS) made
-    get_new_jobs() treat it as brand new on the next cycle and re-alert on
-    the same posting over and over. Returns the pruned dict (caller persists it)."""
+    """Drop jobs first scraped more than `days` calendar days ago. Only an
+    applied job is kept indefinitely — the user curates that list by hand via
+    DELETE /api/jobs/{id}. Everything else (matched-but-unapplied included)
+    ages out after `days`; unmatched jobs never make it into `seen` in the
+    first place (dropped at ingest/scrape time), so in practice this only
+    prunes matched-unapplied jobs. Returns the pruned dict (caller persists it)."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     kept = {}
     for jid, job in seen.items():
-        if job.get("applied") or job.get("matched"):
+        if job.get("applied"):
             kept[jid] = job
             continue
         ts = job.get("scraped_at")
@@ -112,10 +113,25 @@ def mark_applied(job_id: str) -> bool:
 
 
 def get_matched(seen: dict) -> list[dict]:
-    """Matched jobs, newest first — feeds GET /api/jobs."""
-    matched = [j for j in seen.values() if j.get("matched")]
+    """Matched, not-yet-applied jobs, newest first — feeds GET /api/jobs (the
+    active feed, subject to purge_old). Applied jobs move to get_applied()."""
+    matched = [j for j in seen.values() if j.get("matched") and not j.get("applied")]
     matched.sort(key=lambda j: j.get("posted_at") or j.get("scraped_at") or "", reverse=True)
     return matched
+
+
+def get_applied(seen: dict) -> list[dict]:
+    """Applied jobs, newest first — feeds GET /api/jobs/applied. Exempt from
+    purge_old; the user removes entries by hand via delete_job()."""
+    applied = [j for j in seen.values() if j.get("applied")]
+    applied.sort(key=lambda j: j.get("posted_at") or j.get("scraped_at") or "", reverse=True)
+    return applied
+
+
+def delete_job(seen: dict, job_id: str) -> bool:
+    """Remove a job (typically an applied one) from the persisted store.
+    Returns True if it existed. Caller persists via save_seen()."""
+    return seen.pop(job_id, None) is not None
 
 
 # ---- Companies (seed lives in repo data/, mounted to /data) ----

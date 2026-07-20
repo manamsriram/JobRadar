@@ -69,11 +69,27 @@ async def get_jobs():
     return JSONResponse(state.get_matched(state.load_seen()))
 
 
+@app.get("/api/jobs/applied")
+async def get_applied_jobs():
+    return JSONResponse(state.get_applied(state.load_seen()))
+
+
 @app.post("/api/jobs/{job_id}/apply")
 async def apply_job(job_id: str):
-    # Mark applied so purge_old preserves the job past the 3-day window.
+    # Mark applied so purge_old preserves the job past the 3-day window and
+    # get_matched()/get_applied() move it into the separate Applied list.
     if not state.mark_applied(job_id):
         raise HTTPException(status_code=404, detail="job not found")
+    return {"ok": True}
+
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """User-curated removal from the Applied list (or any job, generally)."""
+    seen = state.load_seen()
+    if not state.delete_job(seen, job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    state.save_seen(seen)
     return {"ok": True}
 
 
@@ -148,6 +164,11 @@ async def ingest(request: Request, x_ingest_token: str = Header(default="")):
         if not job.get("posted_at"):
             job["posted_at"] = job["scraped_at"]
         job["matched"] = matches(job)
+        # Unmatched jobs are dropped immediately rather than persisted and
+        # purged later — they're re-evaluated (cheaply) if the source still
+        # lists them on the next ingest.
+        if not job["matched"]:
+            continue
         seen[job["id"]] = job
         added += 1
     state.save_seen(seen)

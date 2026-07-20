@@ -15,7 +15,14 @@ const SOURCE_LABELS: Record<string, string> = {
   funding: "Funding",
 };
 
-export default function JobTable({ jobs }: { jobs: Job[] }) {
+interface JobTableProps {
+  jobs: Job[];
+  mode?: "active" | "applied";
+  onApplied?: (id: string) => void;
+  onDelete?: (id: string) => void;
+}
+
+export default function JobTable({ jobs, mode = "active", onApplied, onDelete }: JobTableProps) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [applied, setApplied] = useState<Set<string>>(new Set());
   const [contactResults, setContactResults] = useState<Record<string, ContactResult>>({});
@@ -73,6 +80,7 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
     try {
       const res = await fetch(`/api/jobs/${id}/apply`, { method: "POST" });
       if (!res.ok) throw new Error(`apply failed: ${res.status}`);
+      onApplied?.(id);
     } catch {
       setApplied((prev) => {
         const next = new Set(prev);
@@ -93,7 +101,7 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
           <th className="p-2">Posted</th>
           <th className="p-2">Fit</th>
           <th className="p-2">Apply</th>
-          <th className="p-2">Applied?</th>
+          <th className="p-2">{mode === "applied" ? "Remove" : "Applied?"}</th>
         </tr>
       </thead>
       <tbody>
@@ -156,7 +164,17 @@ export default function JobTable({ jobs }: { jobs: Job[] }) {
                   </div>
                 </td>
                 <td className="p-2">
-                  {isApplied ? (
+                  {mode === "applied" ? (
+                    <button
+                      className="text-gray-500 hover:text-red-600 hover:underline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete?.(job.id);
+                      }}
+                    >
+                      Remove
+                    </button>
+                  ) : isApplied ? (
                     <span className="text-green-600">✓ Applied</span>
                   ) : (
                     <button
