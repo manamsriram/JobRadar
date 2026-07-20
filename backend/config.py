@@ -6,6 +6,18 @@ ROLE_FILTERS = {
         "software engineer", "backend engineer", "full stack engineer",
         "full-stack engineer", "swe", "software developer",
         "frontend engineer", "fullstack engineer",
+        "web developer", "web engineer",
+        "application developer", "application engineer",
+        "cloud engineer", "devops engineer", "dev ops engineer",
+        "member of technical staff", "associate software engineer",
+        "platform engineer", "site reliability engineer", "sre ",
+        "solutions engineer", "systems engineer",
+        "engineer, software",
+        "technology analyst", "software analyst", "programmer analyst",
+        "junior software engineer", "junior developer",
+        "entry level software", "new grad", "university grad",
+        # new-grad level markers ("Software Engineer I/1", "Engineer I,")
+        "engineer i ", "engineer i,", "engineer 1",
     ],
     "exclude": [
         "senior", "sr ", "sr.", "staff", "principal", "lead", "manager",
