@@ -130,6 +130,49 @@ def test_record_health_increments_streak_on_failure():
     assert health["yc"]["status"] == "failing"
 
 
+def test_record_health_tracks_zero_jobs():
+    health = state.record_health({}, "acme", ok=True, job_count=0)
+    assert health["acme"]["consecutive_zero_jobs"] == 1
+    assert health["acme"]["last_job_count"] == 0
+    health = state.record_health(health, "acme", ok=True, job_count=0)
+    assert health["acme"]["consecutive_zero_jobs"] == 2
+
+
+def test_record_health_resets_zero_jobs_on_found():
+    health = state.record_health({}, "acme", ok=True, job_count=0)
+    health = state.record_health(health, "acme", ok=True, job_count=0)
+    health = state.record_health(health, "acme", ok=True, job_count=3)
+    assert health["acme"]["consecutive_zero_jobs"] == 0
+    assert health["acme"]["last_job_count"] == 3
+
+
+def test_record_health_zero_jobs_starts_at_1_on_first_zero_call():
+    health = state.record_health({}, "acme", ok=True, job_count=0)
+    assert health["acme"]["consecutive_zero_jobs"] == 1
+    # New source without consecutive_zero_jobs default should be 0
+    health = state.record_health(health, "newco", ok=True, job_count=0)
+    assert health["newco"]["consecutive_zero_jobs"] == 1
+
+
+def test_should_skip_source_false_below_threshold():
+    health = {"acme": {"consecutive_zero_jobs": 2}}
+    assert state.should_skip_source(health, "acme", max_zero_cycles=5) is False
+
+
+def test_should_skip_source_true_at_threshold():
+    health = {"acme": {"consecutive_zero_jobs": 5}}
+    assert state.should_skip_source(health, "acme", max_zero_cycles=5) is True
+
+
+def test_should_skip_source_false_for_unknown_source():
+    assert state.should_skip_source({}, "unknown", max_zero_cycles=5) is False
+
+
+def test_should_skip_source_true_above_threshold():
+    health = {"acme": {"consecutive_zero_jobs": 10}}
+    assert state.should_skip_source(health, "acme", max_zero_cycles=5) is True
+
+
 def test_save_seen_creates_bounded_backups(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "SEEN_JOBS_FILE", tmp_path / "seen_jobs.json")
     for i in range(state.BACKUP_KEEP + 2):

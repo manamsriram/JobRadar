@@ -34,6 +34,7 @@ from config import (
     ALERT_INTERVAL_SECONDS,
     CYCLE_RETRY_BUDGET,
     FUNDING_CHECK_INTERVAL,
+    MAX_CONSECUTIVE_ZERO_JOBS,
     POLL_INTERVAL_SECONDS,
     PURGE_AFTER_DAYS,
     VISA_SPONSOR_CHECK_INTERVAL,
@@ -46,6 +47,8 @@ from signals import visa_sponsors
 from signals.careers_discovery import discover_careers_url
 from signals.company_discovery import discover_new_companies
 from signals.funding_watcher import check_funding, resolve_domain_from_article
+from text_utils import slug_to_title
+from url_norm import normalize_url
 
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -78,16 +81,21 @@ def _push_live(job: dict) -> None:
 
 
 def _extract_jobs(anchors, company: str, base_url: str) -> list[dict]:
-    jobs, seen_hrefs = [], set()
+    jobs, seen = [], set()
     for a in anchors:
         href = a.get("href", "")
-        if not href or href in seen_hrefs:
+        if not href:
+            continue
+        # Canonicalize first so two hrefs differing only by tracking params
+        # (utm_source vs fbclid) collapse to one row — otherwise the second
+        # one would emit a duplicate with a fresh uid.
+        full = normalize_url(urljoin(base_url, href))
+        if not full or full in seen:
             continue
         title = _real_title(a, href)
         if not title or len(title) < 5:
             continue
-        seen_hrefs.add(href)
-        full = urljoin(base_url, href)
+        seen.add(full)
         uid = hashlib.md5(full.encode()).hexdigest()[:12]
         jobs.append({
             "id": f"custom_{company.lower()}_{uid}",
@@ -156,7 +164,7 @@ def _real_title(anchor, href: str) -> str:
         return raw
 
     slug = href.rstrip("/").split("/")[-1]
-    return slug.replace("-", " ").title() if slug else raw
+    return slug_to_title(slug) if slug else raw
 
 
 def _nearby_location(anchor) -> str:
@@ -197,21 +205,39 @@ def _drop_promoted_from_queue(queue: list[dict], companies: list[dict]) -> list[
 
 
 async def _gather_sources(
-    companies: list[dict], budget: RetryBudget, health: dict[str, bool]
-) -> list[dict]:
-    """Run every source; concatenate results. Each source guards its own errors
-    and records its outcome into `health` (source name -> ok) for a single
-    batched health save at the end of the cycle."""
+    companies: list[dict], budget: RetryBudget, health: dict
+) -> tuple[list[dict], dict[str, tuple[bool, int]]]:
+    """Run every source; return (jobs, health_updates).
+    `health_updates` maps source_key -> (ok, job_count) for the caller to
+    apply via `record_health`. Sources with `consecutive_zero_jobs` at or
+    above `MAX_CONSECUTIVE_ZERO_JOBS` are skipped entirely to avoid wasting
+    the retry budget on consistently empty career pages."""
     jobs: list[dict] = []
+    health_updates: dict[str, tuple[bool, int]] = {}
     yc_jobs, yc_ok = await fetch_yc(retries=budget.take(2))
     jobs += yc_jobs
-    health["yc"] = yc_ok
+    health_updates["yc"] = (yc_ok, len(yc_jobs))
     for company in companies:
+        source_key = f"company:{company.get('name', 'Unknown')}"
+        if state.should_skip_source(health, source_key, MAX_CONSECUTIVE_ZERO_JOBS):
+            entry = health.setdefault(source_key, {})
+            skip_streak = entry.get("skip_streak", 0) + 1
+            if skip_streak < MAX_CONSECUTIVE_ZERO_JOBS:
+                entry["skip_streak"] = skip_streak
+                n = entry.get("consecutive_zero_jobs", 0)
+                print(f"[scraper] skipping {source_key} ({n} consecutive zero-job cycles)")
+                continue
+            # Probe: without this, consecutive_zero_jobs freezes at the
+            # threshold forever (skipped sources never reach record_health)
+            # and the source would stay skipped even after it starts
+            # posting again. Re-attempt once every MAX_CONSECUTIVE_ZERO_JOBS
+            # skipped cycles instead.
+            entry["skip_streak"] = 0
         c_jobs, ok = await _scrape_company(company, budget)
         jobs += c_jobs
         if ok is not None:
-            health[f"company:{company.get('name', 'Unknown')}"] = ok
-    return jobs
+            health_updates[source_key] = (ok, len(c_jobs))
+    return jobs, health_updates
 
 
 async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mode: bool) -> None:
@@ -262,9 +288,9 @@ async def poll_loop() -> None:
             seen = state.purge_old(seen, days=PURGE_AFTER_DAYS)
             companies = state.load_companies()
             budget = RetryBudget(CYCLE_RETRY_BUDGET)
-            health_updates: dict[str, bool] = {}
+            health = state.load_health()
 
-            jobs = await _gather_sources(companies, budget, health_updates)
+            jobs, health_updates = await _gather_sources(companies, budget, health)
             await _process(jobs, seen, companies, seed_mode)
 
             # Discovered careers pages from funding signals
@@ -279,7 +305,7 @@ async def poll_loop() -> None:
                 for j in found:
                     j["source"] = "funding"
                 if ok is not None:
-                    health_updates[f"funding:{entry.get('company', 'Funded')}"] = ok
+                    health_updates[f"funding:{entry.get('company', 'Funded')}"] = (ok, len(found))
                 await _process(found, seen, companies, seed_mode)
                 funding_results.append((entry, found))
 
@@ -287,9 +313,8 @@ async def poll_loop() -> None:
             # _drop_promoted_from_queue runs there against this updated list.
             companies = await discover_new_companies(companies, jobs, funding_results)
 
-            health = state.load_health()
-            for source, ok in health_updates.items():
-                health = state.record_health(health, source, ok)
+            for source, (ok, job_count) in health_updates.items():
+                health = state.record_health(health, source, ok, job_count)
             state.save_health(health)
 
             # Merge in whatever changed concurrently (applied-flags from

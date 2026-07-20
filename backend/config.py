@@ -79,6 +79,11 @@ VISA_SPONSOR_CHECK_INTERVAL = int(os.getenv("VISA_SPONSOR_CHECK_INTERVAL", str(7
 ALERT_INTERVAL_SECONDS = int(os.getenv("ALERT_INTERVAL_SECONDS", str(4 * 3600)))
 ALERT_DIGEST_SIZE = int(os.getenv("ALERT_DIGEST_SIZE", "5"))
 PURGE_AFTER_DAYS = int(os.getenv("PURGE_AFTER_DAYS", "3"))
+# Consecutive zero-job cycles before a source is auto-skipped. Prevents
+# repeating the same scraping work (and spending retry budget) on a career
+# page that permanently lists no entry-level openings. Reset to 0 on any
+# cycle where >=1 job was found.
+MAX_CONSECUTIVE_ZERO_JOBS = int(os.getenv("MAX_CONSECUTIVE_ZERO_JOBS", "5"))
 # Total fetch retries allowed across one poll cycle (finding #2 guardrail) —
 # caps retry-storm blowup when many sources fail at once (e.g. a network blip)
 # instead of letting every source retry independently and stack past the next

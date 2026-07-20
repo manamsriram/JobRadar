@@ -209,14 +209,31 @@ def save_health(health: dict) -> None:
     _write_json_atomic(SOURCE_HEALTH_FILE, health)
 
 
-def record_health(health: dict, source: str, ok: bool) -> dict:
+def record_health(health: dict, source: str, ok: bool,
+                  job_count: int | None = None) -> dict:
     """Update `source`'s consecutive-failure streak in place. `ok` must reflect
     fetch-level success (no exception, non-5xx) — never "0 jobs matched",
     since a legitimate zero-results cycle isn't a scraper break (senior-pass
-    caveat: keying off match count would cry wolf on normal filter-starvation)."""
-    entry = health.get(source, {"consecutive_failures": 0})
+    caveat: keying off match count would cry wolf on normal filter-starvation).
+
+    When `job_count` is provided, a `consecutive_zero_jobs` counter is also
+    tracked and reset to 0 whenever `job_count > 0`. The caller uses this to
+    skip sources that have returned nothing for `MAX_CONSECUTIVE_ZERO_JOBS`
+    cycles — avoids wasting retry budget on pages with no entry-level openings."""
+    entry = health.get(source, {"consecutive_failures": 0, "consecutive_zero_jobs": 0})
     entry["consecutive_failures"] = 0 if ok else entry.get("consecutive_failures", 0) + 1
     entry["status"] = "ok" if ok else "failing"
     entry["last_checked"] = datetime.now(timezone.utc).isoformat()
+    if job_count is not None:
+        entry["consecutive_zero_jobs"] = 0 if job_count > 0 else entry.get("consecutive_zero_jobs", 0) + 1
+        entry["last_job_count"] = job_count
     health[source] = entry
     return health
+
+
+def should_skip_source(health: dict, source: str, max_zero_cycles: int) -> bool:
+    """True if this source has returned 0 jobs for `max_zero_cycles` or more
+    consecutive scrape cycles. The source will be temporarily skipped until
+    a cycle resets its counter (manual or across the whole batch)."""
+    entry = health.get(source, {})
+    return entry.get("consecutive_zero_jobs", 0) >= max_zero_cycles
