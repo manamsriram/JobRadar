@@ -11,6 +11,8 @@ import httpx
 from bs4 import BeautifulSoup
 
 from fetch import fetch_with_retry
+from text_utils import slug_to_title
+from url_norm import normalize_url
 
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -55,24 +57,29 @@ async def fetch_yc(retries: int = 2) -> tuple[list[dict], bool]:
     anchors = soup.select("a[href*='/jobs/']")
 
     jobs: list[dict] = []
-    seen_hrefs = set()
+    seen = set()
     for a in anchors:
         href = a.get("href", "")
         title = a.get_text(strip=True)
-        if not title or len(title) < 5 or href in seen_hrefs:
+        if not title or len(title) < 5:
             continue
-        seen_hrefs.add(href)
         url = href if href.startswith("http") else f"https://www.ycombinator.com{href}"
+        # Canonicalize first so two hrefs differing only by tracking params
+        # collapse to one row.
+        key = normalize_url(url)
+        if key in seen:
+            continue
+        seen.add(key)
         # href form: /companies/<slug>/jobs/<id>-<title>
         parts = href.strip("/").split("/")
-        company = parts[1].replace("-", " ").title() if len(parts) > 1 else "YC Startup"
-        uid = hashlib.md5(href.encode()).hexdigest()[:12]
+        company = slug_to_title(parts[1]) if len(parts) > 1 else "YC Startup"
+        uid = hashlib.md5(key.encode()).hexdigest()[:12]
         jobs.append({
             "id": f"yc_{uid}",
             "title": title,
             "company": company,
             "location": "",
-            "url": url,
+            "url": key,
             "source": "yc",
             "posted_at": None,
             "description": "",
