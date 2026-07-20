@@ -45,6 +45,25 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 # No CORS: the React build is served same-origin from this app (StaticFiles below).
 
+# Shared secret with the Vercel proxy (frontend/api/[...path].ts) — rejects
+# anyone hitting this VM's IP directly instead of through the proxy. Exempts
+# routes the GH Actions workflow calls directly with their own INGEST_TOKEN,
+# and /api/health for uptime monitors.
+INTERNAL_KEY = os.getenv("INTERNAL_KEY")
+_KEYLESS_PREFIXES = ("/api/ingest", "/api/link-patterns", "/api/health")
+
+
+@app.middleware("http")
+async def require_internal_key(request: Request, call_next):
+    if (
+        INTERNAL_KEY
+        and request.url.path.startswith("/api/")
+        and not request.url.path.startswith(_KEYLESS_PREFIXES)
+        and request.headers.get("x-internal-key") != INTERNAL_KEY
+    ):
+        return JSONResponse({"detail": "forbidden"}, status_code=403)
+    return await call_next(request)
+
 
 # Consecutive fetch failures before a source counts as "down" for the
 # /api/health status code (not just the per-source detail).
