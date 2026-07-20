@@ -35,7 +35,7 @@ _ACRONYMS_UPPER = frozenset({
 # have been empirically audited (see `scripts/audit_slug_acronyms.py`).
 # Used to scope the empirical claim across docstrings below. Keep in
 # sync with `slug_to_title`'s docstring if a new platform is added.
-_EMPIRICAL_SCOPE_PLATFORMS = ("greenhouse", "lever", "ashby")
+_EMPIRICAL_SCOPE_PLATFORMS = ("greenhouse", "lever", "ashby", "workday")
 
 # Mixed-case acronyms — can't be expressed in `_ACRONYMS_UPPER` because
 # .title() / .upper() would either lowercase or uppercase the rest.
@@ -52,8 +52,8 @@ _ACRONYM_TITLED = {
 #   "ic"          → "IC"  (Individual Contributor track)
 # Empirical coverage validated for `_EMPIRICAL_SCOPE_PLATFORMS` href-
 # derived slugs only (see `scripts/audit_slug_acronyms.py`). Other ATS
-# platforms (Workday, iCIMS, SmartRecruiters, custom-hosted boards)
-# have not been sampled — solicit data before adding entries for them.
+# platforms (iCIMS, SmartRecruiters, custom-hosted boards) have not
+# been sampled — solicit data before adding entries for them.
 _SPECULATIVE_ACRONYMS = frozenset({"ic"})
 
 # Shared regex: Lever / Ashby encode role-detail hrefs as
