@@ -29,8 +29,10 @@ _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
-# Launch flags keep Chromium alive under constrained RAM.
-_LAUNCH_ARGS = ["--no-sandbox", "--disable-dev-shm-usage"]
+# Launch flags keep Chromium alive under constrained RAM. --disable-http2 works
+# around sites (e.g. HCLTech) whose edge stack resets the HTTP/2 handshake for
+# headless Chromium's ALPN fingerprint, surfacing as ERR_HTTP2_PROTOCOL_ERROR.
+_LAUNCH_ARGS = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-http2"]
 
 
 def _uid(prefix: str, key: str) -> str:
@@ -67,7 +69,18 @@ async def fetch_custom_js(
         async with async_playwright() as p:
             browser = await p.chromium.launch(args=_LAUNCH_ARGS)
             page = await browser.new_page(user_agent=_UA)
-            await page.goto(url, wait_until="networkidle", timeout=30000)
+            # domcontentloaded, not networkidle — heavy SPAs (Microsoft, Wipro)
+            # keep background XHR/beacons alive indefinitely and never go idle,
+            # which timed out the whole scrape. wait_for_selector below gives
+            # the job list a bounded chance to render instead.
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            try:
+                await page.wait_for_selector(
+                    "a[href*='/jobs/'], a[href*='/careers/'], a[href*='/position']",
+                    timeout=10000,
+                )
+            except Exception:
+                pass  # fall through to selector scrape / adaptive fallback below
             await page.wait_for_timeout(random.randint(1500, 3000))  # let JS render + jitter
             # Career SPAs render each role as an <a> pointing at a
             # job/careers/position detail path.
@@ -117,7 +130,11 @@ async def fetch_levels() -> list[dict]:
         async with async_playwright() as p:
             browser = await p.chromium.launch(args=_LAUNCH_ARGS)
             page = await browser.new_page(user_agent=_UA)
-            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            try:
+                await page.wait_for_selector("a[href*='jobId=']", timeout=10000)
+            except Exception:
+                pass
             await page.wait_for_timeout(random.randint(1500, 3000))
             html = await page.content()
             await browser.close()

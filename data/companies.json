@@ -122,7 +122,7 @@
   {
     "name": "HCLTech",
     "source": "visa-sponsor",
-    "careers_url": "https://www.hcltech.com/careers",
+    "careers_url": "https://careers.hcltech.com/",
     "domain": "hcltech.com",
     "tier": 2,
     "requires_js": true
