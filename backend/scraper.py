@@ -82,6 +82,7 @@ def _push_live(job: dict) -> None:
 
 def _extract_jobs(anchors, company: str, base_url: str) -> list[dict]:
     jobs, seen = [], set()
+    company_name = company or "Unknown"
     for a in anchors:
         href = a.get("href", "")
         if not href:
@@ -98,8 +99,8 @@ def _extract_jobs(anchors, company: str, base_url: str) -> list[dict]:
         seen.add(full)
         uid = hashlib.md5(full.encode()).hexdigest()[:12]
         jobs.append({
-            "id": f"custom_{company.lower()}_{uid}",
-            "title": title, "company": company, "location": _nearby_location(a),
+            "id": f"custom_{company_name.lower()}_{uid}",
+            "title": title, "company": company_name, "location": _nearby_location(a),
             "url": full, "source": "custom", "posted_at": None, "description": "",
         })
     return jobs
@@ -184,7 +185,7 @@ async def _scrape_company(company: dict, budget: RetryBudget | None = None) -> t
     """Returns (jobs, ok). ok is None for skipped sources (no url, or
     requires_js — those aren't attempts, so they shouldn't count as health
     failures)."""
-    name = company.get("name", "Unknown")
+    name = company.get("name") or "Unknown"
     url = company.get("careers_url")
     if not url:
         return [], None
@@ -200,7 +201,7 @@ def _drop_promoted_from_queue(queue: list[dict], companies: list[dict]) -> list[
     """Entries already promoted to companies.json (poll_loop's
     _promote_funding_company) are self-identifying by domain — no cross-loop
     flag needed. Keeps funding_queue.json single-writer (funding_loop only)."""
-    promoted_domains = {c.get("domain", "").lower() for c in companies}
+    promoted_domains = {(c.get("domain") or "").lower() for c in companies}
     return [e for e in queue if (e.get("domain") or "").lower() not in promoted_domains]
 
 
@@ -218,7 +219,7 @@ async def _gather_sources(
     jobs += yc_jobs
     health_updates["yc"] = (yc_ok, len(yc_jobs))
     for company in companies:
-        source_key = f"company:{company.get('name', 'Unknown')}"
+        source_key = f"company:{company.get('name') or 'Unknown'}"
         if state.should_skip_source(health, source_key, MAX_CONSECUTIVE_ZERO_JOBS):
             entry = health.setdefault(source_key, {})
             skip_streak = entry.get("skip_streak", 0) + 1
@@ -241,7 +242,7 @@ async def _gather_sources(
 
 
 async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mode: bool) -> None:
-    by_name = {c.get("name", "").lower(): c for c in companies}
+    by_name = {(c.get("name") or "").lower(): c for c in companies}
     alias_map = state.load_company_aliases()
     for job in state.get_new_jobs(seen, jobs):
         job["scraped_at"] = _now()

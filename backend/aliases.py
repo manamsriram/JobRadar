@@ -7,5 +7,5 @@ never silently discard a real job."""
 
 def canonicalize_company(name: str, aliases: dict[str, str]) -> str:
     if not name:
-        return name
+        return name or ""
     return aliases.get(name.strip().lower(), name)

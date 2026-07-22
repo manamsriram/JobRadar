@@ -105,11 +105,11 @@ def _ats_board_slug(url: str, host: str) -> str | None:
 
 
 def _known_domains(companies: list[dict]) -> set[str]:
-    return {c["domain"].lower() for c in companies if c.get("domain")}
+    return {(c.get("domain") or "").lower() for c in companies if c.get("domain")}
 
 
 def _known_names(companies: list[dict]) -> set[str]:
-    return {_normalize_name(c["name"]) for c in companies if c.get("name")}
+    return {_normalize_name(c.get("name")) for c in companies if c.get("name")}
 
 
 def _make_record(name: str, domain: str, careers_url: str, requires_js: bool, method: str) -> dict:
@@ -126,6 +126,9 @@ def _make_record(name: str, domain: str, careers_url: str, requires_js: bool, me
 
 
 def _add(companies: list[dict], record: dict) -> list[dict]:
+    if not record.get("name") or not record.get("domain"):
+        print(f"[discovery] skipping record with missing name/domain: {record}")
+        return companies
     companies = companies + [record]
     state.save_companies(companies)
     print(f"[discovery] Added {record['name']} ({record['domain']}) via {record['discovery_method']}")

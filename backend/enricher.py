@@ -43,15 +43,15 @@ def _strip_www(host: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
-def _slugify(name: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", name.lower())
+def _slugify(name: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
 
 
 def resolve_domain(company_name: str, posting_url: str | None) -> tuple[str, bool] | None:
     """Returns (domain, guessed). guessed=True means this is a best-effort
     slug guess, not a confirmed domain — flag it to the caller/UI."""
-    companies = {c.get("name", "").lower(): c for c in state.load_companies()}
-    curated = companies.get(company_name.strip().lower())
+    companies = {(c.get("name") or "").lower(): c for c in state.load_companies()}
+    curated = companies.get((company_name or "").strip().lower())
     if curated and curated.get("domain"):
         return curated["domain"], False
 
