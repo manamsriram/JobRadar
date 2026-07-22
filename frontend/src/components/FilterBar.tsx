@@ -8,7 +8,6 @@ const SOURCES = [
   { value: "", label: "All sources" },
   { value: "custom", label: "Company site" },
   { value: "levels", label: "Levels.fyi" },
-  { value: "yc", label: "Y Combinator" },
   { value: "tldr", label: "TLDR Jobs" },
   { value: "funding", label: "Funding signal" },
 ];

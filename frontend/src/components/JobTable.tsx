@@ -10,7 +10,6 @@ interface ContactResult {
 const SOURCE_LABELS: Record<string, string> = {
   custom: "Company site",
   levels: "Levels.fyi",
-  yc: "Y Combinator",
   tldr: "TLDR Jobs",
   funding: "Funding",
 };

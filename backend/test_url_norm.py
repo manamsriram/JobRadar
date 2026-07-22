@@ -129,7 +129,7 @@ def test_idempotent_across_combined_features():
 def test_duplicate_form_collapse():
     """Two hrefs differing only by tracking params should normalize to
     one canonical URL — the dedup-helper premise used by _extract_jobs
-    in scraper.py and fetch_yc in yc_scraper.py."""
+    in scraper.py."""
     bare = "https://example.com/jobs/123"
     assert normalize_url("https://example.com/jobs/123?utm_source=feed") == bare
     assert normalize_url("https://example.com/jobs/123?fbclid=abc") == bare

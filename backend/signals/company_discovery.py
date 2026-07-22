@@ -5,8 +5,6 @@ just name) before any write:
 - funding_promotion: a funding-queue entry whose careers page already yielded
   a matched job (was scraper._promote_funding_company; moved here so all
   auto-added rows share one schema/cap/log path).
-- yc_frequency: a YC company seen across 2+ poll cycles gets a careers-page
-  lookup (persisted counts survive restarts — see state.load_discovery_counts).
 - url_domain_extraction: any scraped job's URL whose domain isn't already
   covered gets the same careers-page lookup.
 
@@ -31,7 +29,6 @@ _UA = (
 )
 
 MAX_NEW_PER_CYCLE = 5
-YC_FREQUENCY_THRESHOLD = 2
 
 # Greenhouse/Lever/Ashby are multi-tenant: the host is shared across every
 # company on the platform, and the *first path segment* is the company's
@@ -154,40 +151,6 @@ async def _from_funding(companies: list[dict], funding_results: list[tuple[dict,
     return companies, added
 
 
-async def _from_yc_frequency(companies: list[dict], yc_jobs: list[dict], budget: int) -> tuple[list[dict], int]:
-    added = 0
-    counts = state.load_discovery_counts()
-    seen_this_cycle: dict[str, str] = {}  # normalized -> original casing
-    for job in yc_jobs:
-        name = job.get("company")
-        if not name:
-            continue
-        norm = _normalize_name(name)
-        if norm in _known_names(companies):
-            continue
-        seen_this_cycle.setdefault(norm, name)
-
-    for norm in seen_this_cycle:
-        counts[norm] = counts.get(norm, 0) + 1
-    state.save_discovery_counts(counts)
-
-    for norm, name in seen_this_cycle.items():
-        if added >= budget:
-            break
-        if counts.get(norm, 0) < YC_FREQUENCY_THRESHOLD:
-            continue
-        domain = f"{_slug(name)}.com"
-        if not _slug(name) or domain in _known_domains(companies):
-            continue
-        url = await discover_careers_url(domain)
-        if not url:
-            continue
-        requires_js = not await _has_job_links(url)
-        companies = _add(companies, _make_record(name, domain, url, requires_js, "yc_frequency"))
-        added += 1
-    return companies, added
-
-
 async def _from_url_domains(companies: list[dict], jobs: list[dict], budget: int) -> tuple[list[dict], int]:
     added = 0
     tried: set[str] = set()
@@ -237,9 +200,6 @@ async def discover_new_companies(
     whenever a row is added (see _add), same as the code this replaces."""
     budget = MAX_NEW_PER_CYCLE
     companies, n = await _from_funding(companies, funding_results, budget)
-    budget -= n
-    yc_jobs = [j for j in jobs if j.get("source") == "yc"]
-    companies, n = await _from_yc_frequency(companies, yc_jobs, budget)
     budget -= n
     companies, _ = await _from_url_domains(companies, jobs, budget)
     return companies

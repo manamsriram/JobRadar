@@ -25,7 +25,6 @@ def test_drop_promoted_from_queue_keeps_unrelated_entries():
 
 
 def test_gather_sources_skips_source_past_zero_job_threshold(monkeypatch):
-    monkeypatch.setattr(scraper, "fetch_yc", lambda retries: _async_result(([], True)))
     calls = []
 
     async def fake_scrape_company(company, budget=None):
@@ -44,7 +43,6 @@ def test_gather_sources_skips_source_past_zero_job_threshold(monkeypatch):
 
 
 def test_gather_sources_probes_source_after_skip_streak_expires(monkeypatch):
-    monkeypatch.setattr(scraper, "fetch_yc", lambda retries: _async_result(([], True)))
     calls = []
 
     async def fake_scrape_company(company, budget=None):
@@ -68,10 +66,6 @@ def test_gather_sources_probes_source_after_skip_streak_expires(monkeypatch):
     assert calls == ["Acme"]
     assert "company:Acme" in updates
     assert health["company:Acme"]["skip_streak"] == 0
-
-
-async def _async_result(value):
-    return value
 
 
 if __name__ == "__main__":

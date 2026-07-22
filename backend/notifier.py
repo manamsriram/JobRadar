@@ -11,7 +11,6 @@ import aiosmtplib
 SOURCE_LABELS = {
     "custom": "Company site",
     "levels": "Levels.fyi",
-    "yc": "Y Combinator",
     "funding": "Funding signal",
 }
 

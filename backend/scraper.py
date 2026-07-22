@@ -1,9 +1,9 @@
 """Orchestrator: drives every source, filters, enriches, alerts, persists.
 
-poll_loop runs continuously (every POLL_INTERVAL_SECONDS): niche boards (YC /
-TLDR), plain (non-JS) custom company career pages, and any careers pages
-discovered from the funding queue. funding_loop runs hourly, watching
-TechCrunch for newly funded startups and discovering their careers pages.
+poll_loop runs continuously (every POLL_INTERVAL_SECONDS): plain (non-JS)
+custom company career pages, and any careers pages discovered from the
+funding queue. funding_loop runs hourly, watching TechCrunch for newly
+funded startups and discovering their careers pages.
 
 Phase 2 split: this process never launches a browser. JS-rendered sources
 (Levels.fyi, `requires_js` company pages) are scraped by a separate GitHub
@@ -42,7 +42,6 @@ from config import (
 from fetch import RetryBudget, fetch_with_retry
 from filter import matches
 from notifier import send_digest_alert
-from scrapers.yc_scraper import fetch_yc, fetch_yc_description
 from signals import visa_sponsors
 from signals.careers_discovery import discover_careers_url
 from signals.company_discovery import discover_new_companies
@@ -215,9 +214,6 @@ async def _gather_sources(
     the retry budget on consistently empty career pages."""
     jobs: list[dict] = []
     health_updates: dict[str, tuple[bool, int]] = {}
-    yc_jobs, yc_ok = await fetch_yc(retries=budget.take(2))
-    jobs += yc_jobs
-    health_updates["yc"] = (yc_ok, len(yc_jobs))
     for company in companies:
         source_key = f"company:{company.get('name') or 'Unknown'}"
         if state.should_skip_source(health, source_key, MAX_CONSECUTIVE_ZERO_JOBS):
@@ -249,8 +245,6 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
         if not job.get("posted_at"):
             job["posted_at"] = job["scraped_at"]
         job["company"] = aliases.canonicalize_company(job.get("company", ""), alias_map)
-        if job.get("source") == "yc" and not job.get("description") and job.get("url"):
-            job["description"] = await fetch_yc_description(job["url"])
         job["matched"] = matches(job)
 
         # AI second-pass gate: regex only catches years-of-experience mentions

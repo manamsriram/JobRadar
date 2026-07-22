@@ -46,6 +46,6 @@ async def discover_careers_url(domain: str) -> str | None:
                 if r is not None and r.status_code == 200:
                     return str(r.url)
             except httpx.HTTPError as e:
-                print(f"[careers_discovery] error: {e}")
+                print(f"[careers_discovery] error probing {url}: {e}")
                 continue
     return None

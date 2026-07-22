@@ -70,39 +70,6 @@ def test_funding_respects_budget(tmp_path, monkeypatch):
     assert len(companies) == 2
 
 
-# ---- yc_frequency ----
-
-def test_yc_frequency_needs_two_cycles(tmp_path, monkeypatch):
-    monkeypatch.setattr(state, "DISCOVERY_COUNTS_FILE", tmp_path / "counts.json")
-    monkeypatch.setattr(state, "COMPANIES_FILE", tmp_path / "companies.json")
-
-    async def _fake_discover(domain):
-        return f"https://{domain}/careers"
-
-    async def _fake_has_links(url):
-        return True
-
-    monkeypatch.setattr(cd, "discover_careers_url", _fake_discover)
-    monkeypatch.setattr(cd, "_has_job_links", _fake_has_links)
-
-    yc_jobs = [{"company": "Widgetly", "source": "yc"}]
-    companies, added = _run(cd._from_yc_frequency([], yc_jobs, budget=5))
-    assert added == 0  # first cycle only sets the count to 1
-
-    companies, added = _run(cd._from_yc_frequency([], yc_jobs, budget=5))
-    assert added == 1
-    assert companies[-1]["discovery_method"] == "yc_frequency"
-    assert companies[-1]["tier"] == 3
-
-
-def test_yc_frequency_skips_already_known_name(tmp_path, monkeypatch):
-    monkeypatch.setattr(state, "DISCOVERY_COUNTS_FILE", tmp_path / "counts.json")
-    existing = [{"name": "Widgetly Inc", "domain": "widgetly.com"}]
-    yc_jobs = [{"company": "Widgetly", "source": "yc"}]
-    companies, added = _run(cd._from_yc_frequency(existing, yc_jobs, budget=5))
-    assert added == 0
-
-
 # ---- url_domain_extraction ----
 
 def test_url_domain_extraction_skips_aggregator_hosts():
