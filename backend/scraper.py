@@ -272,7 +272,8 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
         # source still lists them.
         if not job["matched"]:
             continue
-        company = by_name.get(job.get("company", "").lower())
+        company_name = job.get("company") or ""
+        company = by_name.get(company_name.lower())
         job["low_confidence"] = trust.score_posting(job, company)
         if not seed_mode:
             _push_live(job)

@@ -129,8 +129,8 @@ def _too_old(posted_at: str | None) -> bool:
 
 
 def matches(job: dict) -> bool:
-    title = job.get("title", "").lower()
-    location = job.get("location", "").lower()
+    title = (job.get("title") or "").lower()
+    location = (job.get("location") or "").lower()
 
     # Must have been posted within the recency window
     if _too_old(job.get("posted_at")):
@@ -173,7 +173,7 @@ def matches(job: dict) -> bool:
 
     # Body-level exclusion: drop roles whose description reveals a
     # years-of-experience requirement above the cap (title looked entry-level)
-    description = job.get("description", "").lower()
+    description = (job.get("description") or "").lower()
     if _max_years_required(description) > MAX_YEARS_EXPERIENCE:
         return False
 

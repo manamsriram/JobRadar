@@ -172,9 +172,13 @@ async def ingest(request: Request, x_ingest_token: str = Header(default="")):
     _check_ingest_token(x_ingest_token)
     incoming = await request.json()
     if not isinstance(incoming, list) or not all(
-        isinstance(j, dict) and isinstance(j.get("id"), str) for j in incoming
+        isinstance(j, dict)
+        and isinstance(j.get("id"), str)
+        and isinstance(j.get("title"), str)
+        and isinstance(j.get("company"), str)
+        for j in incoming
     ):
-        raise HTTPException(status_code=400, detail="expected a list of job objects with string ids")
+        raise HTTPException(status_code=400, detail="expected a list of job objects with string id, title, and company")
     seen = state.load_seen()
     added = 0
     now = datetime.now(timezone.utc).isoformat()

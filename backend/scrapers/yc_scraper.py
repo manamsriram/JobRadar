@@ -51,10 +51,9 @@ async def fetch_yc(retries: int = 2) -> tuple[list[dict], bool]:
         return [], False
 
     soup = BeautifulSoup(r.text, "html.parser")
-    # Broken selector? YC lists each role as an <a class="..."> whose href starts
-    # with /companies/<slug>/jobs/. If this yields 0, open the page source and find
-    # the current anchor class or the JSON blob in a <script> and target that.
-    anchors = soup.select("a[href*='/jobs/']")
+    # Real YC job links are /companies/<slug>/jobs/<id>-<title>. The listing
+    # also carries /jobs/role/... location/category links that we must ignore.
+    anchors = soup.select("a[href*='/companies/'][href*='/jobs/']")
 
     jobs: list[dict] = []
     seen = set()
