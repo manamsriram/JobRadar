@@ -4,8 +4,9 @@ import JobTable from "./components/JobTable";
 import FilterBar from "./components/FilterBar";
 import LiveBadge from "./components/LiveBadge";
 import ResumePanel from "./components/ResumePanel";
+import PipelineBoard from "./components/PipelineBoard";
 
-type Tab = "active" | "applied";
+type Tab = "active" | "applied" | "pipeline";
 
 // Same-origin in prod (static build); Vite proxies /api to :8000 in dev.
 export default function App() {
@@ -80,14 +81,26 @@ export default function App() {
         >
           Applied
         </button>
+        <button
+          className={`pb-2 px-1 ${tab === "pipeline" ? "border-b-2 border-blue-600 font-medium" : "text-gray-500"}`}
+          onClick={() => setTab("pipeline")}
+        >
+          Pipeline
+        </button>
       </div>
-      <FilterBar filters={filters} onChange={setFilters} />
-      <JobTable
-        jobs={filtered}
-        mode={tab}
-        onApplied={handleApplied}
-        onDelete={handleDelete}
-      />
+      {tab === "pipeline" ? (
+        <PipelineBoard />
+      ) : (
+        <>
+          <FilterBar filters={filters} onChange={setFilters} />
+          <JobTable
+            jobs={filtered}
+            mode={tab}
+            onApplied={handleApplied}
+            onDelete={handleDelete}
+          />
+        </>
+      )}
     </div>
   );
 }
