@@ -8,3 +8,4 @@ aiosmtplib>=3.0.0
 python-dotenv>=1.0.0
 pypdf>=4.0.0
 python-multipart>=0.0.9
+asyncpg>=0.29.0
