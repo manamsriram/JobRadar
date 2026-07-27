@@ -8,13 +8,18 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import enricher
+import pipeline_db
+import pipeline_events
+import pipeline_state
 import state
 from filter import matches
+from notifier import send_pipeline_alert
+from pipeline_models import CreateApplicationIn, TransitionIn
 from scraper import digest_loop, funding_loop, new_jobs_queue, poll_loop, visa_sponsor_loop
 from signals import visa_sponsors
 
@@ -29,6 +34,8 @@ async def lifespan(app: FastAPI):
     # Run once at startup (not just on the weekly visa_sponsor_loop timer) so
     # all seeded companies are live immediately instead of after the first interval.
     await visa_sponsors.merge_seed_companies(state.load_companies())
+    await pipeline_db.init_pool()
+    pipeline_events.register(send_pipeline_alert)
     tasks = [
         asyncio.create_task(poll_loop()),
         asyncio.create_task(funding_loop()),
@@ -40,6 +47,7 @@ async def lifespan(app: FastAPI):
     finally:
         for t in tasks:
             t.cancel()
+        await pipeline_db.close_pool()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -281,6 +289,51 @@ async def upload_resume(
 async def resume_status():
     meta = state._read_json(state.DATA_DIR / "resume_meta.json", {})
     return {slot: meta.get(slot) for slot in RESUME_SLOTS}
+
+
+# ---- Pipeline tracking ----
+# Applications + event ledger live in Postgres (Supabase), scoped to this
+# feature only — jobs stay in the JSON store. See
+# i-am-building-a-reactive-pearl.md for the full design.
+@app.post("/api/applications")
+async def create_application(body: CreateApplicationIn, response: Response):
+    if body.job_id not in state.load_seen():
+        raise HTTPException(status_code=404, detail="job not found")
+    application, created = await pipeline_db.create_or_get_application(
+        body.job_id, body.job_title, body.company, body.job_url
+    )
+    if created:
+        state.mark_applied(body.job_id)
+        response.status_code = 201
+    else:
+        response.status_code = 200
+    return application
+
+
+@app.get("/api/pipeline")
+async def get_pipeline():
+    return await pipeline_db.get_pipeline()
+
+
+@app.post("/api/applications/{application_id}/transition")
+async def transition_application(application_id: str, body: TransitionIn):
+    try:
+        application, event = await pipeline_db.transition(
+            application_id, body.to_state, body.note, body.scorecard, body.metadata
+        )
+    except pipeline_db.ApplicationNotFoundError:
+        raise HTTPException(status_code=404, detail="application not found")
+    except pipeline_state.TerminalStateError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except (pipeline_state.InvalidTransitionError, pipeline_state.GateNotSatisfiedError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    await pipeline_events.notify(application, event)
+    return application
+
+
+@app.get("/api/applications/{application_id}/events")
+async def get_application_events(application_id: str):
+    return await pipeline_db.get_events(application_id)
 
 
 # Serve the built React frontend (only if present — absent during backend-only dev).

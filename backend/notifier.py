@@ -38,6 +38,46 @@ def _format_body(job: dict) -> str:
     return "\n".join(lines)
 
 
+async def send_pipeline_alert(application: dict, event: dict) -> bool:
+    """Email one alert per pipeline state transition. Registered as a
+    pipeline_events subscriber (backend/pipeline_events.py)."""
+    user = os.getenv("GMAIL_USER")
+    password = os.getenv("GMAIL_APP_PASSWORD")
+    alert_to = os.getenv("ALERT_TO") or user
+    if not user or not password:
+        print("[notifier] Gmail credentials unset — skipping pipeline alert.")
+        return False
+
+    from_state = event.get("from_state") or "—"
+    to_state = event["to_state"]
+    subject_verb = "logged" if from_state == to_state else "moved"
+
+    msg = EmailMessage()
+    msg["Subject"] = f"📋 JobRadar: {application['company']} {subject_verb} to {to_state}"
+    msg["From"] = user
+    msg["To"] = alert_to
+    lines = [
+        f"{application['job_title']} — {application['company']}",
+        f"State:    {from_state} -> {to_state}",
+        f"Apply:    {application.get('job_url') or '—'}",
+    ]
+    if event.get("note"):
+        lines.append(f"Note:     {event['note']}")
+    if event.get("scorecard"):
+        lines.append(f"Scorecard: {event['scorecard']}")
+    msg.set_content("\n".join(lines))
+
+    try:
+        await aiosmtplib.send(
+            msg, hostname="smtp.gmail.com", port=465,
+            username=user, password=password, use_tls=True,
+        )
+    except Exception as e:
+        print(f"[notifier] pipeline alert error: {e}")
+        return False
+    return True
+
+
 async def send_digest_alert(jobs: list[dict]) -> bool:
     """Email a digest of the given (already-limited) job list. Returns True if sent."""
     if not jobs:
