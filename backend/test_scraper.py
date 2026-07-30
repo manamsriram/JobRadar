@@ -7,10 +7,12 @@ import asyncio
 
 import pytest
 
+import httpx
+
 import scraper
 from config import MAX_CONSECUTIVE_ZERO_JOBS
 from fetch import RetryBudget
-from scraper import _drop_promoted_from_queue, _gather_sources
+from scraper import _drop_promoted_from_queue, _fetch_job_description, _gather_sources
 
 
 def test_drop_promoted_from_queue_removes_matching_domain():
@@ -66,6 +68,37 @@ def test_gather_sources_probes_source_after_skip_streak_expires(monkeypatch):
     assert calls == ["Acme"]
     assert "company:Acme" in updates
     assert health["company:Acme"]["skip_streak"] == 0
+
+
+def test_fetch_job_description_strips_chrome_and_returns_body_text(monkeypatch):
+    html = "<html><head><script>bad()</script></head><body><nav>Home</nav><p>Great role here.</p></body></html>"
+
+    class _Resp:
+        text = html
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+    async def fake_get(self, url, timeout=None, follow_redirects=True):
+        return _Resp()
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+    result = asyncio.run(_fetch_job_description("https://example.com/job/1"))
+
+    assert "Great role here." in result
+    assert "bad()" not in result
+    assert "Home" not in result
+
+
+def test_fetch_job_description_returns_empty_on_fetch_failure(monkeypatch):
+    async def fake_get(self, url, timeout=None, follow_redirects=True):
+        raise httpx.ConnectError("boom", request=None)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+    assert asyncio.run(_fetch_job_description("https://example.com/job/1")) == ""
 
 
 if __name__ == "__main__":

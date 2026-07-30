@@ -99,3 +99,7 @@ DEGREE_PLUS_EXPERIENCE_EXCLUDE = [
     "master's degree", "masters degree", "master's in", "masters in",
     "ms degree", "m.s. degree", "phd", "ph.d.", "doctorate",
 ]
+
+# Cap on job-detail-page text handed to the AI gate — keeps the prompt (and
+# per-call token cost) bounded regardless of how verbose a posting page is.
+MAX_DESCRIPTION_CHARS = int(os.getenv("MAX_DESCRIPTION_CHARS", "6000"))

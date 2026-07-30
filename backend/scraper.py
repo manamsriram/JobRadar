@@ -35,6 +35,7 @@ from config import (
     CYCLE_RETRY_BUDGET,
     FUNDING_CHECK_INTERVAL,
     MAX_CONSECUTIVE_ZERO_JOBS,
+    MAX_DESCRIPTION_CHARS,
     POLL_INTERVAL_SECONDS,
     PURGE_AFTER_DAYS,
     VISA_SPONSOR_CHECK_INTERVAL,
@@ -237,6 +238,23 @@ async def _gather_sources(
     return jobs, health_updates
 
 
+async def _fetch_job_description(url: str) -> str:
+    """Best-effort full JD text from a job's own detail page, for the AI
+    gate — listing-page scrapes only ever capture title/url, never body
+    copy. Empty string (gate stays closed) on any fetch/parse failure;
+    never blocks the pipeline over one bad job page."""
+    try:
+        async with httpx.AsyncClient(headers={"User-Agent": _UA}) as client:
+            r = await fetch_with_retry(client, url, retries=1)
+    except httpx.HTTPError as e:
+        print(f"[scraper] description fetch failed for {url}: {e}")
+        return ""
+    soup = BeautifulSoup(r.text, "html.parser")
+    for tag in soup(["script", "style", "nav", "header", "footer"]):
+        tag.decompose()
+    return soup.get_text(separator=" ", strip=True)[:MAX_DESCRIPTION_CHARS]
+
+
 async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mode: bool) -> None:
     by_name = {(c.get("name") or "").lower(): c for c in companies}
     alias_map = state.load_company_aliases()
@@ -251,7 +269,12 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
         # that fit a fixed pattern, so it still lets some over-experienced
         # roles through. Only worth calling when there's real description text
         # to reason over, and never during seed_mode (would burn the whole
-        # daily call budget on the first-ever run's backlog).
+        # daily call budget on the first-ever run's backlog). Listing scrapes
+        # never populate description themselves, so fetch the job's own page
+        # lazily here — only for jobs that already passed the regex gate,
+        # keeping the extra request count down to matches only.
+        if job["matched"] and not seed_mode and not job.get("description"):
+            job["description"] = await _fetch_job_description(job["url"])
         if job["matched"] and not seed_mode and len(job.get("description", "")) > 100:
             verdict = await ai_match.review(job)
             if verdict is not None:
