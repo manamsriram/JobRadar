@@ -12,6 +12,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, Response, UploadFil
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import ai_match
 import enricher
 import pipeline_db
 import pipeline_events
@@ -20,7 +21,7 @@ import state
 from filter import matches
 from notifier import send_pipeline_alert
 from pipeline_models import CreateApplicationIn, TransitionIn
-from scraper import digest_loop, funding_loop, new_jobs_queue, poll_loop, visa_sponsor_loop
+from scraper import _fetch_job_description, digest_loop, funding_loop, new_jobs_queue, poll_loop, visa_sponsor_loop
 from signals import visa_sponsors
 
 FRONTEND_DIST = "frontend/dist"
@@ -195,6 +196,22 @@ async def ingest(request: Request, x_ingest_token: str = Header(default="")):
         if not job.get("posted_at"):
             job["posted_at"] = job["scraped_at"]
         job["matched"] = matches(job)
+
+        # Same AI second-pass gate as the poll_loop path (scraper.py):
+        # regex only catches years-of-experience mentions that fit a fixed
+        # pattern, so it still lets some over-experienced roles through.
+        if job["matched"] and not job.get("description"):
+            job["description"] = await _fetch_job_description(job["url"])
+        if job["matched"] and len(job.get("description", "")) > 100:
+            verdict = await ai_match.review(job)
+            if verdict is not None:
+                if verdict["verdict"] == "reject":
+                    job["matched"] = False
+                else:
+                    job["ai_score"] = verdict.get("score")
+                    job["ai_resume"] = verdict.get("resume")
+                    job["ai_reason"] = verdict.get("reason")
+
         # Unmatched jobs are dropped immediately rather than persisted and
         # purged later — they're re-evaluated (cheaply) if the source still
         # lists them on the next ingest.

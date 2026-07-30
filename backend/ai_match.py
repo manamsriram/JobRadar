@@ -3,6 +3,7 @@ free-tier providers, falling through to the next when one's daily cap is hit.
 Degrades to None (caller keeps the regex verdict) once every configured
 provider is exhausted or fails: missing key, HTTP error, timeout, bad JSON.
 """
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -25,7 +26,9 @@ PROVIDER_URLS = {
     "groq": "https://api.groq.com/openai/v1/chat/completions",
 }
 PROVIDER_DEFAULT_MODEL = {
-    "openrouter": "google/gemma-4-31b-it:free",
+    # google/gemma-4-31b-it:free hits frequent 429s on OpenRouter's shared
+    # free-tier pool (verified 2026-07-30); gpt-oss-20b has been reliable.
+    "openrouter": "openai/gpt-oss-20b:free",
     "groq": "llama-3.1-8b-instant",
 }
 PROVIDER_DEFAULT_CAP = {
@@ -147,7 +150,11 @@ async def _call_provider(provider: str, prompt: str) -> dict | None:
             async with httpx.AsyncClient(timeout=30) as client:
                 r = await client.post(url, json=payload, headers=headers)
             _record_call(provider)
-            if r.status_code >= 500 and attempt == 0:
+            if r.status_code in (429, 500, 502, 503) and attempt == 0:
+                # Free-tier models share an upstream pool and 429 in short
+                # bursts; a brief pause clears it more often than an
+                # immediate retry does.
+                await asyncio.sleep(2)
                 continue
             r.raise_for_status()
             content = r.json()["choices"][0]["message"]["content"]
@@ -155,6 +162,7 @@ async def _call_provider(provider: str, prompt: str) -> dict | None:
         except (httpx.HTTPError, KeyError, IndexError) as e:
             print(f"[ai_match] {provider} request failed: {e}")
             if attempt == 0:
+                await asyncio.sleep(2)
                 continue
             return None
     return None
