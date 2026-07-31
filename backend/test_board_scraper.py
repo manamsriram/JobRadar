@@ -87,3 +87,36 @@ def test_parse_newgrad_rows_skips_row_missing_apply_link():
 
 def test_parse_newgrad_rows_handles_empty_html():
     assert bs._parse_newgrad_rows("") == []
+
+
+def test_build_google_query_includes_domain_and_date_filter():
+    q = bs._build_google_query("greenhouse.io")
+    assert "site%3Agreenhouse.io" in q or "site:greenhouse.io" in q
+    assert "tbs=qdr%3Ad" in q or "tbs=qdr:d" in q
+    assert q.startswith("https://www.google.com/search?")
+
+
+def test_build_google_query_excludes_senior_level_terms():
+    q = bs._build_google_query("lever.co")
+    assert "-senior" in q
+
+
+_SERP_HTML = """
+<html><body>
+<a href="https://boards.greenhouse.io/acme/jobs/123">Software Engineer New Grad at Acme</a>
+<a href="https://www.google.com/search?q=unrelated">unrelated google link</a>
+<a href="https://otherdomain.com/careers/456">not the ATS domain</a>
+</body></html>
+"""
+
+
+def test_parse_google_serp_keeps_only_matching_domain_links():
+    jobs = bs._parse_google_serp(_SERP_HTML, "greenhouse.io")
+    assert len(jobs) == 1
+    assert jobs[0]["url"] == "https://boards.greenhouse.io/acme/jobs/123"
+    assert jobs[0]["title"] == "Software Engineer New Grad at Acme"
+    assert jobs[0]["source"] == "google-search"
+
+
+def test_parse_google_serp_handles_empty_html():
+    assert bs._parse_google_serp("", "greenhouse.io") == []

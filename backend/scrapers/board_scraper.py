@@ -16,8 +16,10 @@ board should never block the others in the same run.
 import hashlib
 import os
 import random
+from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
+import httpx
 from playwright.async_api import async_playwright
 
 _UA = (
@@ -160,3 +162,75 @@ async def fetch_newgrad_minisite() -> list[dict]:
     except Exception as e:
         print(f"[board_scraper] error scraping newgrad minisite: {e}")
     return list(all_jobs.values())
+
+
+# ---- Google boolean search across ATS domains ----
+# Modeled directly on briansjobsearch.com's own approach (confirmed
+# 2026-07-31 by driving its UI): one query PER DOMAIN using Google's native
+# tbs=qdr:d (past-24h) filter, rather than one big OR-chain across all
+# domains — Google truncates long queries and a multi-domain OR chain
+# returned unreliable results in manual testing.
+#
+# CONFIRMED RISK: a single manual request to Google for this exact kind of
+# query was redirected straight to google.com/sorry (CAPTCHA wall) on the
+# first attempt, no warm-up. Sriram's explicit call: ship this anyway,
+# best-effort — expect it to return [] most days from a GitHub Actions IP.
+# Never let a blocked/failed query raise past this function.
+ATS_DOMAINS = [
+    "lever.co", "greenhouse.io", "ashbyhq.com", "app.dover.io", "breezy.hr",
+    "careerpuck.com", "jobs.smartrecruiters.com", "apply.workable.com",
+    "jobs.jobvite.com", "careers.bullhorn.com", "workwithus.pinpointhq.com",
+    "jobs.hrmdirect.com", "applytojob.com", "recruitee.com",
+]
+_GOOGLE_EXCLUDE_TERMS = ["senior", "staff", "principal", "lead", "manager", "director"]
+
+
+def _build_google_query(domain: str) -> str:
+    from config import ROLE_FILTERS
+    titles = " OR ".join(
+        f'"{t}"' if " " in t else t for t in ROLE_FILTERS["titles"]
+    )
+    excludes = " ".join(f"-{w}" for w in _GOOGLE_EXCLUDE_TERMS)
+    q = f"({titles}) site:{domain} {excludes}"
+    return "https://www.google.com/search?" + urlencode({"q": q, "tbs": "qdr:d"})
+
+
+def _parse_google_serp(html: str, domain: str) -> list[dict]:
+    """Doesn't depend on Google's SERP HTML structure at all (unverifiable
+    — blocked before rendering during design) — scans every <a href> and
+    keeps only links whose URL contains the target ATS domain. Link text
+    becomes the job's title as-is; unlike other sources, _process() never
+    re-fetches/replaces title from the job's own page (only description),
+    so a noisy SERP snippet can persist as the shown title. Accepted
+    trade-off — the existing regex title filter still runs against it."""
+    soup = BeautifulSoup(html, "html.parser")
+    jobs, seen = [], set()
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if domain not in href or not href.startswith("http") or href in seen:
+            continue
+        title = a.get_text(strip=True)
+        if len(title) < 5:
+            continue
+        seen.add(href)
+        jobs.append({
+            "id": _uid("google", href),
+            "title": title, "company": "Unknown", "location": "",
+            "url": href, "source": "google-search", "posted_at": None, "description": "",
+        })
+    return jobs
+
+
+async def fetch_google_boolean(domain: str) -> list[dict]:
+    url = _build_google_query(domain)
+    try:
+        async with httpx.AsyncClient(headers={"User-Agent": _UA}, follow_redirects=True) as client:
+            r = await client.get(url, timeout=15)
+            r.raise_for_status()
+    except httpx.HTTPError as e:
+        print(f"[board_scraper] google search failed for {domain}: {e}")
+        return []
+    if "google.com/sorry" in str(r.url):
+        print(f"[board_scraper] google search blocked (CAPTCHA) for {domain}")
+        return []
+    return _parse_google_serp(r.text, domain)
