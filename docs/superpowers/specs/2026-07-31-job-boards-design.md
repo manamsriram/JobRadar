@@ -10,36 +10,56 @@ of ten.
 
 ## Scope
 
-Boards: Handshake, Jobright, Simplify, HiringCafe, NewGrad-jobs,
-briansjobsearch, plus a hand-tuned Google boolean search across ATS domains
-(lever.co, greenhouse.io, ashbyhq.com, app.dover.io, breezy.hr,
-careerpuck.com, jobs.smartrecruiters.com, apply.workable.com,
-jobs.jobvite.com, careers.bullhorn.com, workwithus.pinpointhq.com,
-jobs.hrmdirect.com, applytojob.com, recruitee.com).
+Boards: Handshake, Jobright (personalized, login), Simplify, HiringCafe,
+plus a Google boolean search across ATS domains (lever.co, greenhouse.io,
+ashbyhq.com, app.dover.io, breezy.hr, careerpuck.com,
+jobs.smartrecruiters.com, apply.workable.com, jobs.jobvite.com,
+careers.bullhorn.com, workwithus.pinpointhq.com, jobs.hrmdirect.com,
+applytojob.com, recruitee.com).
 
 LinkedIn was considered and dropped — scraping while logged in ties
 automated activity to Sriram's personal LinkedIn account, and repeated runs
 risk a temporary restriction/ban. Not worth it relative to the other boards.
 
+briansjobsearch.com and newgrad-jobs.com were folded into other sources
+after live inspection (see below) rather than built as standalone scrapers:
+
+- **briansjobsearch.com** turned out to not be a job board at all — it's a
+  UI that builds one Google search URL per ATS domain (confirmed via
+  `agent-browser`: clicking its "Start" button produces links like
+  `google.com/search?q="Software Engineer" site:greenhouse.io remote
+  usa&tbs=qdr:h1`, one per platform, using Google's native `tbs=qdr:*`
+  time-filter param). This *is* the Google boolean search board — its
+  per-domain-query pattern is adopted directly instead of hand-rolling a
+  batched OR-chain query.
+- **newgrad-jobs.com** turned out to just embed two iframes — a public,
+  login-free Jobright "new-grad SWE" minisite
+  (`jobright.ai/minisites-jobs/newgrad/us/swe`) and an Airtable. Scraping
+  newgrad-jobs.com means scraping that Jobright minisite directly. This is
+  unrelated to Sriram's personalized/filtered Jobright.com search, which
+  still needs login.
+
 ## 1. Boolean search
 
-Google truncates long queries and a single 14-domain OR chain returns
-unreliable results, so the site-list is batched into 3-4 queries per run
-(4-5 `site:` domains each), each combined with the existing title/exclude
-terms already used for the regular pipeline:
+Modeled on briansjobsearch.com's own approach (verified working): one
+query **per ATS domain** (14 total) rather than one big OR-chain across all
+domains — Google truncates long queries and a multi-domain OR chain returns
+unreliable results, whereas one domain + the full title OR-list stays well
+under the practical length limit. Each query:
 
 ```
-(site:lever.co OR site:greenhouse.io OR site:ashbyhq.com OR site:app.dover.io OR site:breezy.hr)
-("software engineer" OR "backend engineer" OR "full stack engineer" OR swe OR "software developer"
- OR "frontend engineer" OR "new grad" OR "university grad" OR ...)
--senior -staff -principal -lead -manager
+https://www.google.com/search?q=("software engineer" OR "backend engineer" OR "full stack engineer"
+  OR swe OR "software developer" OR "frontend engineer" OR "new grad" OR "university grad" OR ...)
+  site:lever.co -senior -staff -principal -lead -manager&tbs=qdr:d
 ```
 
-Title/exclude terms are pulled from `backend/config.py`'s existing
-`ROLE_FILTERS["titles"]` / `["exclude"]` — no separate list to maintain.
-The `-senior -staff ...` terms are excludes (strip senior-level postings out
-of results), not includes — new-grad terms (`new grad`, `swe`, etc.) are
-what's being searched *for*.
+repeated for each of the 14 domains (`tbs=qdr:d` = Google's native past-24h
+filter, same param briansjobsearch.com uses). Title/exclude terms are
+pulled from `backend/config.py`'s existing `ROLE_FILTERS["titles"]` /
+`["exclude"]` — no separate list to maintain. The `-senior -staff ...`
+terms are excludes (strip senior-level postings out of results), not
+includes — new-grad terms (`new grad`, `swe`, etc.) are what's being
+searched *for*.
 
 Fetched via plain `httpx` GET against Google's SERP (static HTML, no
 Playwright/browser needed) — cheaper than a full browser render.
@@ -48,7 +68,7 @@ Playwright/browser needed) — cheaper than a full browser render.
 bot-detected than scraping career pages directly; expect occasional CAPTCHA
 walls. Handled the same way as `_fetch_job_description`'s existing
 best-effort pattern — a failed fetch returns empty and never blocks the
-pipeline. Kept to once/day, ~3-4 queries, realistic UA + jitter, to keep
+pipeline. Kept to once/day, 14 queries, realistic UA + jitter, to keep
 risk low (not zero).
 
 ## 2. Board scrapers
@@ -60,22 +80,61 @@ New `data/job_boards.json`, one entry per board:
   {"name": "handshake", "url": "<filtered search URL>", "requires_login": true, "source": "handshake"},
   {"name": "jobright", "url": "...", "requires_login": true, "source": "jobright"},
   {"name": "simplify", "url": "...", "requires_login": true, "source": "simplify"},
-  {"name": "hiringcafe", "url": "...", "requires_login": false, "source": "hiringcafe"},
-  {"name": "newgrad-jobs", "url": "...", "requires_login": false, "source": "newgrad-jobs"},
-  {"name": "briansjobsearch", "url": "...", "requires_login": false, "source": "briansjobsearch"}
+  {"name": "hiringcafe", "url": "<filtered search URL>", "requires_login": false, "source": "hiringcafe"}
 ]
 ```
 
 `url` is the search-results page with Sriram's board-native filters already
 applied (copied from the browser after configuring filters in the board's
-own UI) — JobRadar does not reimplement each board's filter UI.
+own UI) — JobRadar does not reimplement each board's filter UI. The
+Jobright new-grad minisite (`newgrad-jobs`) has a fixed public URL, not a
+per-user filtered one, so it's hardcoded rather than stored in this config.
 
-One new function per board in `backend/scrapers/playwright_scraper.py`
-(markup differs per site, so each gets its own CSS-selector set, same
-pattern as the existing `fetch_levels()`). Login-gated boards
-(Handshake/Jobright/Simplify) open their browser context with
-`storage_state="data/auth_state.json"` instead of a fresh unauthenticated
-context.
+New file `backend/scrapers/board_scraper.py` (kept separate from
+`playwright_scraper.py`, which already handles company-career-page
+scraping — a distinct responsibility) with one function per board:
+
+- `fetch_hiringcafe(url)` — confirmed via live DOM inspection
+  (`agent-browser`) on `hiringcafe.com`. Cards: `div.relative.bg-white
+  .rounded-xl.border` (one per listing, confirmed 19 matches against 19
+  visible listings). Within each card: title = `span.font-bold
+  .line-clamp-2`; company = the first `span.font-bold` nested inside
+  `span.line-clamp-3.font-light`; location = the `span.line-clamp-2`
+  *without* `font-bold` (title has both classes, location has only
+  `line-clamp-2` — distinguish on that); link = `a[href*="/job/"]` inside
+  the card (confirmed real hrefs like
+  `hiringcafe.com/job/software-engineer-ii-ai-ml-bank-of-america-...`).
+  `ponytail: HiringCafe uses plain Tailwind utility classes with no
+  semantic hooks — this selector combination is what's stable today, not
+  a documented API. If it silently returns 0 jobs, the site's markup
+  changed; re-inspect with agent-browser before assuming the account/URL
+  broke.`
+- `fetch_newgrad_minisite()` — hits `jobright.ai/minisites-jobs/newgrad
+  /us/swe?embed=true` directly (confirmed public, no login). Rows:
+  `tr[class*="tableRow"]` inside the results table (CSS-module classes
+  with a build-hash suffix, substring-matched the same way
+  `fetch_levels()` already handles Levels.fyi's build-hashed classes).
+  Confirmed columns in order: index, Position Title
+  (`.index_positionTitle__`), Date, Apply link
+  (`.index_airtableApplyLink__`), Work Model, Location, Company, Salary,
+  Company Size, Company Industry, Qualifications, H1B Sponsored, Is New
+  Grad. Company/location/salary/H1B columns use a shared
+  `.index_cellText__` class — read by column position, not class alone.
+  **The table is virtualized** (only visible rows are in the DOM,
+  confirmed by a `transform: translateY(...)` style on the table) — the
+  scraper must scroll the container and re-read rows in a loop until no
+  new row keys appear, not just read the DOM once.
+- `fetch_handshake(url)`, `fetch_jobright(url)`, `fetch_simplify(url)` —
+  selectors unknown (login-gated, not reachable during design). Each is a
+  stub with a `NotImplementedError` and a docstring describing the
+  discovery procedure, filled in as its own implementation-plan task: log
+  in once locally, open the filtered URL, use `agent-browser eval` the
+  same way `fetch_hiringcafe`'s selectors were derived here, then replace
+  the stub.
+
+Login-gated boards (Handshake/Jobright/Simplify) open their browser
+context with `storage_state="data/auth_state.json"` instead of a fresh
+unauthenticated context.
 
 ## 3. Session refresh
 
@@ -94,10 +153,14 @@ and re-uploads the secret when he notices via the dashboard health widget
 
 ## 4. Pipeline integration
 
-All boards feed the same path as every existing source: `_run()` in
-`playwright_scraper.py` → POST `/api/ingest` → `_process()` in
-`scraper.py`. No new filter/AI-gate/alert logic — boards are just more rows
-of jobs entering the same funnel.
+All boards feed the same terminal path as every existing source: an
+`_run()` entrypoint POSTs a JSON job list to `/api/ingest`, same as
+`playwright_scraper.py` does today. `board_scraper.py` gets its own
+`_run()` (same shape) and its own GitHub Actions workflow, on a daily
+cron (not the existing 30-minute one) — see the boolean-search and
+login-session risk notes above for why. No new filter/AI-gate/alert logic
+on the backend — boards are just more rows of jobs entering the same
+`/api/ingest` → `_process()` funnel.
 
 ## 5. Cross-board dedup
 
