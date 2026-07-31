@@ -24,6 +24,24 @@ def test_get_new_jobs_skips_entries_without_id():
     assert state.get_new_jobs({}, fetched) == []
 
 
+def test_find_cross_source_duplicate_matches_on_company_title_location():
+    seen = {"a": {"company": "Acme", "title": "Software Engineer", "location": "Remote"}}
+    job = {"company": "acme", "title": "software engineer", "location": "remote"}
+    assert state.find_cross_source_duplicate(seen, job) == "a"
+
+
+def test_find_cross_source_duplicate_no_match_returns_none():
+    seen = {"a": {"company": "Acme", "title": "Software Engineer", "location": "Remote"}}
+    job = {"company": "Acme", "title": "Data Scientist", "location": "Remote"}
+    assert state.find_cross_source_duplicate(seen, job) is None
+
+
+def test_find_cross_source_duplicate_ignores_blank_company_or_title():
+    seen = {"a": {"company": "", "title": "", "location": "Remote"}}
+    job = {"company": "", "title": "", "location": "Remote"}
+    assert state.find_cross_source_duplicate(seen, job) is None
+
+
 def test_purge_old_drops_stale_unapplied():
     seen = {"a": {"scraped_at": _now_iso(30)}}
     assert state.purge_old(seen, days=3) == {}
