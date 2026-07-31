@@ -234,3 +234,71 @@ async def fetch_google_boolean(domain: str) -> list[dict]:
         print(f"[board_scraper] google search blocked (CAPTCHA) for {domain}")
         return []
     return _parse_google_serp(r.text, domain)
+
+
+# ---- Login-gated boards ----
+# Handshake, Jobright (personalized search — distinct from the public
+# minisite above), and Simplify all require Sriram's own login to see his
+# filtered results, and none were reachable during design (no session to
+# inspect with). Each is a stub raising NotImplementedError with the exact
+# discovery procedure — filled in as its own task once a real session
+# exists (see scripts/save_login_session.py):
+#   1. Run scripts/save_login_session.py once to produce AUTH_STATE_PATH.
+#   2. `agent-browser open <the board's filtered search URL>` — this reuses
+#      the saved session via `agent-browser connect` or a fresh session
+#      logged in by hand, either works for one-off inspection.
+#   3. `agent-browser eval "..."` to find the job-card container, then
+#      title/company/location/link selectors within it — same technique
+#      used to derive fetch_hiringcafe's selectors (see git history /
+#      docs/superpowers/specs/2026-07-31-job-boards-design.md for the
+#      worked example).
+#   4. Replace the matching stub below with a real _parse_x + fetch_x pair,
+#      following fetch_hiringcafe's shape exactly.
+#
+# Resolved relative to this file (not the process cwd): the GitHub Actions
+# workflow runs this module with working-directory: backend, but the
+# secret-restore step that writes the session file runs at the repo root
+# (actions' default) — a cwd-relative "data/auth_state.json" would point
+# at two different files between those two steps. Anchoring on __file__
+# keeps both sides pointed at the same repo-root data/auth_state.json
+# regardless of which directory the process was launched from.
+AUTH_STATE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "data", "auth_state.json"
+)
+
+
+async def _login_page(p):
+    """Playwright page pre-loaded with the saved login session. Raises
+    FileNotFoundError with a clear message if no session has been captured
+    yet, instead of a confusing Playwright error deep in browser startup."""
+    if not os.path.exists(AUTH_STATE_PATH):
+        raise FileNotFoundError(
+            f"{AUTH_STATE_PATH} not found — run scripts/save_login_session.py first"
+        )
+    browser = await p.chromium.launch(args=_LAUNCH_ARGS)
+    context = await browser.new_context(storage_state=AUTH_STATE_PATH, user_agent=_UA)
+    return browser, await context.new_page()
+
+
+async def fetch_handshake(url: str) -> list[dict]:
+    raise NotImplementedError(
+        "Handshake selectors not yet determined (login-gated, unreachable "
+        "during design). See the module docstring above this section for "
+        "the discovery procedure."
+    )
+
+
+async def fetch_jobright(url: str) -> list[dict]:
+    raise NotImplementedError(
+        "Jobright selectors not yet determined (login-gated, unreachable "
+        "during design). See the module docstring above this section for "
+        "the discovery procedure."
+    )
+
+
+async def fetch_simplify(url: str) -> list[dict]:
+    raise NotImplementedError(
+        "Simplify selectors not yet determined (login-gated, unreachable "
+        "during design). See the module docstring above this section for "
+        "the discovery procedure."
+    )
