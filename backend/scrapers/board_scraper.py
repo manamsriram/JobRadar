@@ -13,7 +13,10 @@ Every fetch_* function is best-effort: a failure returns [] and is logged,
 never raised, matching every other scraper in this codebase — one bad
 board should never block the others in the same run.
 """
+import argparse
+import asyncio
 import hashlib
+import json
 import os
 import random
 from urllib.parse import urlencode
@@ -302,3 +305,56 @@ async def fetch_simplify(url: str) -> list[dict]:
         "during design). See the module docstring above this section for "
         "the discovery procedure."
     )
+
+
+# ---- GitHub Action entrypoint ----
+# Invoked by .github/workflows/job_boards_scraper.yml:
+#   python -m scrapers.board_scraper --boards ../data/job_boards.json --output board_jobs.json
+# The workflow then POSTs board_jobs.json to /api/ingest, same as
+# playwright_scraper.py — but on its own daily schedule, not the existing
+# 30-minute one (see the workflow file for why: login-session risk and the
+# confirmed Google CAPTCHA block both favor low frequency here).
+async def _run(boards_path: str, output_path: str) -> None:
+    boards = json.loads(open(boards_path).read())
+    all_jobs: list[dict] = []
+
+    for board in boards:
+        name, url = board.get("name"), board.get("url")
+        if not url:
+            print(f"[board_scraper] skipping {name}: no url configured in job_boards.json")
+            continue
+        try:
+            if name == "hiringcafe":
+                jobs = await fetch_hiringcafe(url)
+            elif name == "handshake":
+                jobs = await fetch_handshake(url)
+            elif name == "jobright":
+                jobs = await fetch_jobright(url)
+            elif name == "simplify":
+                jobs = await fetch_simplify(url)
+            else:
+                print(f"[board_scraper] unknown board {name}, skipping")
+                continue
+        except NotImplementedError as e:
+            print(f"[board_scraper] {name} not implemented yet: {e}")
+            continue
+        all_jobs.extend(jobs)
+        await asyncio.sleep(random.uniform(1.5, 3.0))
+
+    all_jobs.extend(await fetch_newgrad_minisite())
+
+    for domain in ATS_DOMAINS:
+        all_jobs.extend(await fetch_google_boolean(domain))
+        await asyncio.sleep(random.uniform(1.5, 3.0))
+
+    with open(output_path, "w") as f:
+        json.dump(all_jobs, f, ensure_ascii=False, indent=2)
+    print(f"[board_scraper] wrote {len(all_jobs)} job(s) to {output_path}")
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="Daily job-board aggregator scraper")
+    ap.add_argument("--boards", required=True, help="path to data/job_boards.json")
+    ap.add_argument("--output", default="board_jobs.json", help="where to write scraped jobs")
+    args = ap.parse_args()
+    asyncio.run(_run(args.boards, args.output))
