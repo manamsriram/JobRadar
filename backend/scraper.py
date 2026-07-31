@@ -291,6 +291,12 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
         # source still lists them.
         if not job["matched"]:
             continue
+        dup_id = state.find_cross_source_duplicate(seen, job)
+        if dup_id:
+            sources = seen[dup_id].setdefault("sources", [seen[dup_id]["source"]])
+            if job["source"] not in sources:
+                sources.append(job["source"])
+            continue
         company_name = job.get("company") or ""
         company = by_name.get(company_name.lower())
         job["low_confidence"] = trust.score_posting(job, company)

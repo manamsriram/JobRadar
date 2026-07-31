@@ -218,6 +218,12 @@ async def ingest(request: Request, x_ingest_token: str = Header(default="")):
         # lists them on the next ingest.
         if not job["matched"]:
             continue
+        dup_id = state.find_cross_source_duplicate(seen, job)
+        if dup_id:
+            sources = seen[dup_id].setdefault("sources", [seen[dup_id]["source"]])
+            if job["source"] not in sources:
+                sources.append(job["source"])
+            continue
         seen[job["id"]] = job
         added += 1
     state.save_seen(seen)
