@@ -13,4 +13,5 @@ data/seen_jobs.json
 data/seen_funding.json
 data/resume_*
 data/ai_budget.json
+data/auth_state.json
 .DS_Store
