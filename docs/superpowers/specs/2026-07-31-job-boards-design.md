@@ -64,12 +64,30 @@ searched *for*.
 Fetched via plain `httpx` GET against Google's SERP (static HTML, no
 Playwright/browser needed) — cheaper than a full browser render.
 
-**Risk:** scraping Google SERPs programmatically is more aggressively
-bot-detected than scraping career pages directly; expect occasional CAPTCHA
-walls. Handled the same way as `_fetch_job_description`'s existing
-best-effort pattern — a failed fetch returns empty and never blocks the
-pipeline. Kept to once/day, 14 queries, realistic UA + jitter, to keep
-risk low (not zero).
+**Risk (confirmed, not hypothetical):** a live test during design — one
+manual `agent-browser` request to Google for exactly this kind of query —
+was redirected straight to `google.com/sorry/...` (Google's CAPTCHA wall)
+on the *first* attempt, no warm-up. This is expected to fail most/all of
+the time from a GitHub Actions IP. Sriram's call: build it anyway as
+best-effort, same non-blocking pattern as `_fetch_job_description` (a
+failed/blocked fetch returns no jobs for that query and never breaks the
+run) — accepted that this board may simply not produce results on most
+days rather than being a reliable feed. Not worth a paid SERP API for
+this personal-use tool.
+
+**Parsing approach:** since Google's SERP markup churns and a wrapper
+class (`div.g` etc.) wasn't verifiable (blocked before rendering), the
+parser doesn't depend on Google's HTML structure at all — it scans every
+`<a href>` in whatever HTML comes back and keeps only links whose host
+matches one of the 14 known ATS domains being queried. Link text becomes
+the job's title. `_process()` already fetches the job's own page for
+`description` when a job passes the initial regex gate (existing AI-gate
+step), but it does *not* re-fetch/replace `title` — so a Google-sourced
+job's title stays whatever text Google's link snippet had, which can be
+noisy (truncated, prefixed with the company name, etc.). Accepted
+trade-off for this source specifically: the regex title filter still runs
+against it, so junk titles are as likely to be dropped as matched, same
+risk as any other source's title text.
 
 ## 2. Board scrapers
 
