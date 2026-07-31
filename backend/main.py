@@ -86,7 +86,7 @@ async def health():
         name: s for name, s in sources.items()
         if s.get("consecutive_failures", 0) >= HEALTH_FAILURE_THRESHOLD
     }
-    body = {"status": "degraded" if down else "ok", "sources": sources}
+    body = {"status": "degraded" if down else "ok", "sources": sources, "down": list(down.keys())}
     if down:
         return JSONResponse(body, status_code=503)
     return body
