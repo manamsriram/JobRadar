@@ -89,3 +89,74 @@ async def fetch_hiringcafe(url: str) -> list[dict]:
         print(f"[board_scraper] error scraping hiringcafe: {e}")
         return []
     return _parse_hiringcafe(html)
+
+
+# ---- Jobright new-grad minisite ----
+# Public, no login (confirmed 2026-07-31) — this is what newgrad-jobs.com
+# itself embeds in an iframe. Columns confirmed via live inspection, in
+# order: index, Position Title, Date, Apply link, Work Model, Location,
+# Company, Salary, Company Size, Company Industry, Qualifications, H1B
+# Sponsored, Is New Grad. CSS-module classes carry a build-hash suffix that
+# changes across Jobright deploys, so matched by substring (same technique
+# playwright_scraper.py's fetch_levels() already uses for Levels.fyi).
+NEWGRAD_MINISITE_URL = "https://jobright.ai/minisites-jobs/newgrad/us/swe?embed=true"
+
+
+def _parse_newgrad_rows(html: str) -> list[dict]:
+    soup = BeautifulSoup(html, "html.parser")
+    jobs = []
+    for row in soup.select("tr[class*='tableRow']"):
+        cells = row.find_all("td")
+        if len(cells) < 7:
+            continue
+        title_el = cells[1].select_one("[class*='positionTitle']")
+        apply_el = cells[3].select_one("a[class*='airtableApplyLink']")
+        if not title_el or not apply_el or not apply_el.get("href"):
+            continue
+        title = title_el.get_text(strip=True)
+        if len(title) < 5:
+            continue
+        href = apply_el["href"]
+        location = cells[5].get_text(strip=True)
+        company = cells[6].get_text(strip=True) or "Unknown"
+        jobs.append({
+            "id": _uid("newgrad", href),
+            "title": title, "company": company, "location": location,
+            "url": href, "source": "newgrad-jobs", "posted_at": None, "description": "",
+        })
+    return jobs
+
+
+async def fetch_newgrad_minisite() -> list[dict]:
+    """The results table is virtualized (react-window-style — only visible
+    rows exist in the DOM at any moment, confirmed via a `transform:
+    translateY(...)` style on the table). A single page.content() read
+    would only capture whatever happened to be on-screen, so this scrolls
+    and merges by job id across rounds, stopping once 3 consecutive rounds
+    add nothing new (or after 30 rounds regardless, as a hard bound against
+    an infinite scroll)."""
+    all_jobs: dict[str, dict] = {}
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(args=_LAUNCH_ARGS)
+            page = await browser.new_page(user_agent=_UA)
+            await page.goto(NEWGRAD_MINISITE_URL, wait_until="domcontentloaded", timeout=30000)
+            try:
+                await page.wait_for_selector("tr[class*='tableRow']", timeout=10000)
+            except Exception:
+                pass
+            stale_rounds = 0
+            for _ in range(30):
+                html = await page.content()
+                before = len(all_jobs)
+                for j in _parse_newgrad_rows(html):
+                    all_jobs[j["id"]] = j
+                stale_rounds = stale_rounds + 1 if len(all_jobs) == before else 0
+                if stale_rounds >= 3:
+                    break
+                await page.mouse.wheel(0, 800)
+                await page.wait_for_timeout(random.randint(400, 800))
+            await browser.close()
+    except Exception as e:
+        print(f"[board_scraper] error scraping newgrad minisite: {e}")
+    return list(all_jobs.values())

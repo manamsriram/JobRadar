@@ -47,3 +47,43 @@ def test_parse_hiringcafe_skips_card_without_job_link():
 
 def test_parse_hiringcafe_handles_empty_html():
     assert bs._parse_hiringcafe("") == []
+
+
+_NEWGRAD_ROW = """
+<table>
+<tbody>
+<tr class="index_tableRow___byxr">
+  <td><span class="index_indexCell__2L7Ty">1</span></td>
+  <td><span class="index_positionTitle__xrG_i">Network Analyst</span></td>
+  <td><span>1 hour ago</span></td>
+  <td><a class="index_airtableApplyLink__Dob0_" href="https://jobright.ai/jobs/info/6a26f59d7d827633afff7ad2">Apply</a></td>
+  <td><span>On Site</span></td>
+  <td><span class="index_cellText__hfa_t">Chattanooga, TN</span></td>
+  <td><span class="index_cellText__hfa_t">Peraton</span></td>
+</tr>
+</tbody>
+</table>
+"""
+
+
+def test_parse_newgrad_rows_extracts_title_company_location_url():
+    jobs = bs._parse_newgrad_rows(_NEWGRAD_ROW)
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job["title"] == "Network Analyst"
+    assert job["company"] == "Peraton"
+    assert job["location"] == "Chattanooga, TN"
+    assert job["url"] == "https://jobright.ai/jobs/info/6a26f59d7d827633afff7ad2"
+    assert job["source"] == "newgrad-jobs"
+
+
+def test_parse_newgrad_rows_skips_row_missing_apply_link():
+    row = _NEWGRAD_ROW.replace(
+        '<a class="index_airtableApplyLink__Dob0_" href="https://jobright.ai/jobs/info/6a26f59d7d827633afff7ad2">Apply</a>',
+        "",
+    )
+    assert bs._parse_newgrad_rows(row) == []
+
+
+def test_parse_newgrad_rows_handles_empty_html():
+    assert bs._parse_newgrad_rows("") == []
