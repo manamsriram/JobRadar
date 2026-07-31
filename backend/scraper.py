@@ -275,6 +275,7 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
         # keeping the extra request count down to matches only.
         if job["matched"] and not seed_mode and not job.get("description"):
             job["description"] = await _fetch_job_description(job["url"])
+            job["matched"] = matches(job)
         if job["matched"] and not seed_mode and len(job.get("description", "")) > 100:
             verdict = await ai_match.review(job)
             if verdict is not None:

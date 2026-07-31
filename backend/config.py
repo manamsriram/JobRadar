@@ -78,7 +78,7 @@ VISA_SPONSOR_CHECK_INTERVAL = int(os.getenv("VISA_SPONSOR_CHECK_INTERVAL", str(7
 # Email digest cadence — batches matches instead of one email per job.
 ALERT_INTERVAL_SECONDS = int(os.getenv("ALERT_INTERVAL_SECONDS", str(4 * 3600)))
 ALERT_DIGEST_SIZE = int(os.getenv("ALERT_DIGEST_SIZE", "5"))
-PURGE_AFTER_DAYS = int(os.getenv("PURGE_AFTER_DAYS", "3"))
+PURGE_AFTER_DAYS = int(os.getenv("PURGE_AFTER_DAYS", "7"))
 # Consecutive zero-job cycles before a source is auto-skipped. Prevents
 # repeating the same scraping work (and spending retry budget) on a career
 # page that permanently lists no entry-level openings. Reset to 0 on any

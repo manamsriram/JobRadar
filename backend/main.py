@@ -202,6 +202,7 @@ async def ingest(request: Request, x_ingest_token: str = Header(default="")):
         # pattern, so it still lets some over-experienced roles through.
         if job["matched"] and not job.get("description"):
             job["description"] = await _fetch_job_description(job["url"])
+            job["matched"] = matches(job)
         if job["matched"] and len(job.get("description", "")) > 100:
             verdict = await ai_match.review(job)
             if verdict is not None:
