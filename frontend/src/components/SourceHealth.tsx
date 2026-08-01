@@ -23,7 +23,11 @@ export default function SourceHealth() {
   if (down.length === 0) return null;
 
   return (
-    <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-1.5">
+    <div
+      role="status"
+      aria-live="polite"
+      className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-1.5"
+    >
       ⚠ {down.length} source{down.length > 1 ? "s" : ""} down: {down.join(", ")}
     </div>
   );
