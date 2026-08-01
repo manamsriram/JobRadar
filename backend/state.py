@@ -77,6 +77,29 @@ def get_new_jobs(seen: dict, fetched: list[dict]) -> list[dict]:
     return [j for j in fetched if j.get("id") and j["id"] not in seen]
 
 
+def find_cross_source_duplicate(seen: dict, job: dict) -> str | None:
+    """Same posting scraped from two different boards has two different
+    URLs (hence two different ids), so the id-based lookup in get_new_jobs
+    won't catch it. This is a same-cycle O(n) scan over `seen` keyed on
+    (company, title, location) instead — acceptable at this dataset size
+    (hundreds, not millions, of rows)."""
+    company = (job.get("company") or "").strip().lower()
+    title = (job.get("title") or "").strip().lower()
+    if not company or company == "unknown" or not title:
+        return None
+    location = (job.get("location") or "").strip().lower()
+    key = (company, title, location)
+    for jid, existing in seen.items():
+        existing_key = (
+            (existing.get("company") or "").strip().lower(),
+            (existing.get("title") or "").strip().lower(),
+            (existing.get("location") or "").strip().lower(),
+        )
+        if existing_key == key:
+            return jid
+    return None
+
+
 def purge_old(seen: dict, days: int) -> dict:
     """Drop jobs first scraped more than `days` calendar days ago. Only an
     applied job is kept indefinitely — the user curates that list by hand via

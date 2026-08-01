@@ -1,0 +1,6 @@
+[
+  {"name": "handshake", "url": "", "requires_login": true, "source": "handshake"},
+  {"name": "jobright", "url": "", "requires_login": true, "source": "jobright"},
+  {"name": "simplify", "url": "", "requires_login": true, "source": "simplify"},
+  {"name": "hiringcafe", "url": "", "requires_login": false, "source": "hiringcafe"}
+]

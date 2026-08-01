@@ -265,6 +265,23 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
         job["company"] = aliases.canonicalize_company(job.get("company", ""), alias_map)
         job["matched"] = matches(job)
 
+        # Unmatched jobs are dropped immediately rather than persisted and
+        # purged later — they're cheaply re-evaluated next cycle if the
+        # source still lists them.
+        if not job["matched"]:
+            continue
+
+        # Cross-source duplicates are merged right after the cheap regex
+        # gate, before the expensive description fetch / AI review — a
+        # posting scraped from two boards shouldn't burn a second AI call
+        # just to be discarded as a duplicate afterward.
+        dup_id = state.find_cross_source_duplicate(seen, job)
+        if dup_id:
+            sources = seen[dup_id].setdefault("sources", [seen[dup_id].get("source", "unknown")])
+            if job["source"] not in sources:
+                sources.append(job["source"])
+            continue
+
         # AI second-pass gate: regex only catches years-of-experience mentions
         # that fit a fixed pattern, so it still lets some over-experienced
         # roles through. Only worth calling when there's real description text
@@ -273,7 +290,7 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
         # never populate description themselves, so fetch the job's own page
         # lazily here — only for jobs that already passed the regex gate,
         # keeping the extra request count down to matches only.
-        if job["matched"] and not seed_mode and not job.get("description"):
+        if not seed_mode and not job.get("description"):
             job["description"] = await _fetch_job_description(job["url"])
             job["matched"] = matches(job)
         if job["matched"] and not seed_mode and len(job.get("description", "")) > 100:
@@ -285,10 +302,6 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
                     job["ai_score"] = verdict.get("score")
                     job["ai_resume"] = verdict.get("resume")
                     job["ai_reason"] = verdict.get("reason")
-
-        # Unmatched jobs are dropped immediately rather than persisted and
-        # purged later — they're cheaply re-evaluated next cycle if the
-        # source still lists them.
         if not job["matched"]:
             continue
         company_name = job.get("company") or ""

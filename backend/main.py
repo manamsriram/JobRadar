@@ -86,7 +86,7 @@ async def health():
         name: s for name, s in sources.items()
         if s.get("consecutive_failures", 0) >= HEALTH_FAILURE_THRESHOLD
     }
-    body = {"status": "degraded" if down else "ok", "sources": sources}
+    body = {"status": "degraded" if down else "ok", "sources": sources, "down": list(down.keys())}
     if down:
         return JSONResponse(body, status_code=503)
     return body
@@ -185,9 +185,10 @@ async def ingest(request: Request, x_ingest_token: str = Header(default="")):
         and isinstance(j.get("id"), str)
         and isinstance(j.get("title"), str)
         and isinstance(j.get("company"), str)
+        and isinstance(j.get("source"), str)
         for j in incoming
     ):
-        raise HTTPException(status_code=400, detail="expected a list of job objects with string id, title, and company")
+        raise HTTPException(status_code=400, detail="expected a list of job objects with string id, title, company, and source")
     seen = state.load_seen()
     added = 0
     now = datetime.now(timezone.utc).isoformat()
@@ -197,10 +198,27 @@ async def ingest(request: Request, x_ingest_token: str = Header(default="")):
             job["posted_at"] = job["scraped_at"]
         job["matched"] = matches(job)
 
+        # Unmatched jobs are dropped immediately rather than persisted and
+        # purged later — they're re-evaluated (cheaply) if the source still
+        # lists them on the next ingest.
+        if not job["matched"]:
+            continue
+
+        # Cross-source duplicates are merged right after the cheap regex
+        # gate, before the expensive description fetch / AI review — a
+        # posting scraped from two boards shouldn't burn a second AI call
+        # just to be discarded as a duplicate afterward.
+        dup_id = state.find_cross_source_duplicate(seen, job)
+        if dup_id:
+            sources = seen[dup_id].setdefault("sources", [seen[dup_id].get("source", "unknown")])
+            if job["source"] not in sources:
+                sources.append(job["source"])
+            continue
+
         # Same AI second-pass gate as the poll_loop path (scraper.py):
         # regex only catches years-of-experience mentions that fit a fixed
         # pattern, so it still lets some over-experienced roles through.
-        if job["matched"] and not job.get("description"):
+        if not job.get("description"):
             job["description"] = await _fetch_job_description(job["url"])
             job["matched"] = matches(job)
         if job["matched"] and len(job.get("description", "")) > 100:
@@ -212,10 +230,6 @@ async def ingest(request: Request, x_ingest_token: str = Header(default="")):
                     job["ai_score"] = verdict.get("score")
                     job["ai_resume"] = verdict.get("resume")
                     job["ai_reason"] = verdict.get("reason")
-
-        # Unmatched jobs are dropped immediately rather than persisted and
-        # purged later — they're re-evaluated (cheaply) if the source still
-        # lists them on the next ingest.
         if not job["matched"]:
             continue
         seen[job["id"]] = job

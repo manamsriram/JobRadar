@@ -3,6 +3,7 @@ import { useSSE, type Job } from "./hooks/useSSE";
 import JobTable from "./components/JobTable";
 import FilterBar from "./components/FilterBar";
 import LiveBadge from "./components/LiveBadge";
+import SourceHealth from "./components/SourceHealth";
 import ResumePanel from "./components/ResumePanel";
 import PipelineBoard from "./components/PipelineBoard";
 
@@ -65,7 +66,10 @@ export default function App() {
     <div className="max-w-5xl mx-auto p-6">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">JobRadar</h1>
-        <LiveBadge count={liveJobs.length} />
+        <div className="flex items-center gap-3">
+          <SourceHealth />
+          <LiveBadge count={liveJobs.length} />
+        </div>
       </div>
       <ResumePanel />
       <div className="flex gap-4 border-b mb-4">
