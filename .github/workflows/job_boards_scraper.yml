@@ -37,6 +37,8 @@ jobs:
         run: printf '%s' "$AUTH_STATE" > data/auth_state.json
       - name: Scrape
         working-directory: backend
+        env:
+          DATA_DIR: ${{ github.workspace }}/data
         run: python -m scrapers.board_scraper --boards ../data/job_boards.json --output board_jobs.json
       - name: POST to /api/ingest
         env:
