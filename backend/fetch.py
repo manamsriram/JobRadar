@@ -36,7 +36,11 @@ async def _get_validating_redirects(
     let a "safe" host 302 to a private/loopback/metadata address."""
     if not is_safe_url(url):
         raise httpx.UnsupportedProtocol(f"refusing to fetch unsafe URL: {url}")
-    r = await client.get(url, timeout=timeout, follow_redirects=False)
+    # CodeQL's py/full-ssrf doesn't recognize is_safe_url (DNS-resolves and
+    # checks against private/loopback/link-local/reserved ranges in
+    # net_safety.py) as a sanitizer — it only models inline urlparse/allowlist
+    # idioms, not calls into another module. Guard runs unconditionally above.
+    r = await client.get(url, timeout=timeout, follow_redirects=False)  # lgtm[py/full-ssrf]
     hops = 0
     while getattr(r, "next_request", None) is not None:
         if hops >= _MAX_REDIRECTS:
@@ -44,7 +48,7 @@ async def _get_validating_redirects(
         next_url = str(r.next_request.url)
         if not is_safe_url(next_url):
             raise httpx.UnsupportedProtocol(f"refusing to follow unsafe redirect: {next_url}")
-        r = await client.send(r.next_request, follow_redirects=False)
+        r = await client.send(r.next_request, follow_redirects=False)  # lgtm[py/full-ssrf]
         hops += 1
     return r
 
