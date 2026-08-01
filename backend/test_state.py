@@ -42,6 +42,15 @@ def test_find_cross_source_duplicate_ignores_blank_company_or_title():
     assert state.find_cross_source_duplicate(seen, job) is None
 
 
+def test_find_cross_source_duplicate_ignores_unknown_company_placeholder():
+    # Google-search and selector-miss fallbacks emit literal "Unknown" as a
+    # company placeholder — treating it as a real match key would collapse
+    # unrelated same-titled postings into one (see board_scraper.py).
+    seen = {"a": {"company": "Unknown", "title": "Software Engineer", "location": ""}}
+    job = {"company": "Unknown", "title": "Software Engineer", "location": ""}
+    assert state.find_cross_source_duplicate(seen, job) is None
+
+
 def test_purge_old_drops_stale_unapplied():
     seen = {"a": {"scraped_at": _now_iso(30)}}
     assert state.purge_old(seen, days=3) == {}

@@ -14,7 +14,7 @@ export default function SourceHealth() {
       fetch("/api/health")
         .then((r) => r.json())
         .then((body) => setDown(body.down ?? []))
-        .catch(() => {}); // best-effort — a failed health check shouldn't itself alarm the UI
+        .catch((err) => console.error("SourceHealth: /api/health check failed", err)); // best-effort — a failed health check shouldn't itself alarm the UI, but shouldn't be invisible either
     check();
     const id = setInterval(check, POLL_MS);
     return () => clearInterval(id);

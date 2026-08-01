@@ -49,6 +49,15 @@ def test_parse_hiringcafe_handles_empty_html():
     assert bs._parse_hiringcafe("") == []
 
 
+def test_parse_hiringcafe_resolves_relative_job_url():
+    card = _HIRINGCAFE_CARD.replace(
+        'href="https://hiringcafe.com/job/software-engineer-ii-ai-ml-bank-of-america-plano-texas-7hwrzwj7zoza1qft"',
+        'href="/job/software-engineer-ii-ai-ml-bank-of-america-plano-texas-7hwrzwj7zoza1qft"',
+    )
+    jobs = bs._parse_hiringcafe(card, base_url="https://hiringcafe.com/search?q=swe")
+    assert jobs[0]["url"] == "https://hiringcafe.com/job/software-engineer-ii-ai-ml-bank-of-america-plano-texas-7hwrzwj7zoza1qft"
+
+
 _NEWGRAD_ROW = """
 <table>
 <tbody>
@@ -120,3 +129,24 @@ def test_parse_google_serp_keeps_only_matching_domain_links():
 
 def test_parse_google_serp_handles_empty_html():
     assert bs._parse_google_serp("", "greenhouse.io") == []
+
+
+import asyncio
+
+import pytest
+
+
+@pytest.mark.parametrize("fetcher", [bs.fetch_handshake, bs.fetch_jobright, bs.fetch_simplify])
+def test_login_gated_stubs_raise_not_implemented(fetcher):
+    # _run()'s dispatch (board_scraper.py) specifically catches
+    # NotImplementedError to skip unfinished boards without aborting the
+    # run — if a stub's exception type ever drifted, that catch would stop
+    # working silently.
+    with pytest.raises(NotImplementedError):
+        asyncio.run(fetcher("https://example.com"))
+
+
+def test_login_page_raises_clear_error_when_session_not_captured(monkeypatch, tmp_path):
+    monkeypatch.setattr(bs, "AUTH_STATE_PATH", str(tmp_path / "auth_state.json"))
+    with pytest.raises(FileNotFoundError, match="save_login_session.py"):
+        asyncio.run(bs._login_page(None))

@@ -17,13 +17,18 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import random
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 
 from bs4 import BeautifulSoup
 import httpx
 from playwright.async_api import async_playwright
+
+import state
+
+logger = logging.getLogger(__name__)
 
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -47,7 +52,7 @@ def _uid(prefix: str, key: str) -> str:
 # `span.line-clamp-2` (no font-bold — that's what distinguishes it from
 # title), company is the first `span.font-bold` nested inside
 # `span.line-clamp-3.font-light`.
-def _parse_hiringcafe(html: str) -> list[dict]:
+def _parse_hiringcafe(html: str, base_url: str = "https://hiringcafe.com") -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
     jobs = []
     for card in soup.select("div.relative.bg-white.rounded-xl.border"):
@@ -66,7 +71,7 @@ def _parse_hiringcafe(html: str) -> list[dict]:
                 break
         company_el = card.select_one("span.line-clamp-3.font-light span.font-bold")
         company = company_el.get_text(strip=True) if company_el else "Unknown"
-        href = link["href"]
+        href = urljoin(base_url, link["href"])
         jobs.append({
             "id": _uid("hiringcafe", href),
             "title": title, "company": company, "location": location,
@@ -75,7 +80,9 @@ def _parse_hiringcafe(html: str) -> list[dict]:
     return jobs
 
 
-async def fetch_hiringcafe(url: str) -> list[dict]:
+async def fetch_hiringcafe(url: str) -> tuple[list[dict], bool]:
+    """Returns (jobs, ok) — ok reflects fetch-level success (no exception),
+    not job_count, so callers can feed it straight into state.record_health."""
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(args=_LAUNCH_ARGS)
@@ -86,14 +93,14 @@ async def fetch_hiringcafe(url: str) -> list[dict]:
                     "div.relative.bg-white.rounded-xl.border", timeout=10000
                 )
             except Exception:
-                pass
+                logger.warning("hiringcafe: selector wait timed out, parsing whatever loaded")
             await page.wait_for_timeout(random.randint(1500, 3000))
             html = await page.content()
             await browser.close()
     except Exception as e:
-        print(f"[board_scraper] error scraping hiringcafe: {e}")
-        return []
-    return _parse_hiringcafe(html)
+        logger.error("error scraping hiringcafe: %s", e)
+        return [], False
+    return _parse_hiringcafe(html, url), True
 
 
 # ---- Jobright new-grad minisite ----
@@ -132,14 +139,14 @@ def _parse_newgrad_rows(html: str) -> list[dict]:
     return jobs
 
 
-async def fetch_newgrad_minisite() -> list[dict]:
+async def fetch_newgrad_minisite() -> tuple[list[dict], bool]:
     """The results table is virtualized (react-window-style — only visible
     rows exist in the DOM at any moment, confirmed via a `transform:
     translateY(...)` style on the table). A single page.content() read
     would only capture whatever happened to be on-screen, so this scrolls
     and merges by job id across rounds, stopping once 3 consecutive rounds
     add nothing new (or after 30 rounds regardless, as a hard bound against
-    an infinite scroll)."""
+    an infinite scroll). Returns (jobs, ok) — see fetch_hiringcafe."""
     all_jobs: dict[str, dict] = {}
     try:
         async with async_playwright() as p:
@@ -149,7 +156,7 @@ async def fetch_newgrad_minisite() -> list[dict]:
             try:
                 await page.wait_for_selector("tr[class*='tableRow']", timeout=10000)
             except Exception:
-                pass
+                logger.warning("newgrad minisite: selector wait timed out, parsing whatever loaded")
             stale_rounds = 0
             for _ in range(30):
                 html = await page.content()
@@ -163,8 +170,9 @@ async def fetch_newgrad_minisite() -> list[dict]:
                 await page.wait_for_timeout(random.randint(400, 800))
             await browser.close()
     except Exception as e:
-        print(f"[board_scraper] error scraping newgrad minisite: {e}")
-    return list(all_jobs.values())
+        logger.error("error scraping newgrad minisite: %s", e)
+        return list(all_jobs.values()), False
+    return list(all_jobs.values()), True
 
 
 # ---- Google boolean search across ATS domains ----
@@ -224,19 +232,22 @@ def _parse_google_serp(html: str, domain: str) -> list[dict]:
     return jobs
 
 
-async def fetch_google_boolean(domain: str) -> list[dict]:
+async def fetch_google_boolean(domain: str) -> tuple[list[dict], bool]:
+    """Returns (jobs, ok) — see fetch_hiringcafe. A CAPTCHA block counts as
+    ok=False: it's a genuine fetch-level failure (confirmed-common for this
+    source), not a "0 jobs matched" case, so it should surface as such."""
     url = _build_google_query(domain)
     try:
         async with httpx.AsyncClient(headers={"User-Agent": _UA}, follow_redirects=True) as client:
             r = await client.get(url, timeout=15)
             r.raise_for_status()
     except httpx.HTTPError as e:
-        print(f"[board_scraper] google search failed for {domain}: {e}")
-        return []
+        logger.warning("google search failed for %s: %s", domain, e)
+        return [], False
     if "google.com/sorry" in str(r.url):
-        print(f"[board_scraper] google search blocked (CAPTCHA) for {domain}")
-        return []
-    return _parse_google_serp(r.text, domain)
+        logger.warning("google search blocked (CAPTCHA) for %s", domain)
+        return [], False
+    return _parse_google_serp(r.text, domain), True
 
 
 # ---- Login-gated boards ----
@@ -314,45 +325,68 @@ async def fetch_simplify(url: str) -> list[dict]:
 # playwright_scraper.py — but on its own daily schedule, not the existing
 # 30-minute one (see the workflow file for why: login-session risk and the
 # confirmed Google CAPTCHA block both favor low frequency here).
+_BOARD_FETCHERS = {
+    "hiringcafe": fetch_hiringcafe,
+    "handshake": fetch_handshake,
+    "jobright": fetch_jobright,
+    "simplify": fetch_simplify,
+}
+
+
 async def _run(boards_path: str, output_path: str) -> None:
-    boards = json.loads(open(boards_path).read())
+    with open(boards_path) as f:
+        boards = json.load(f)
     all_jobs: list[dict] = []
+    health = state.load_health()
 
     for board in boards:
         name, url = board.get("name"), board.get("url")
         if not url:
-            print(f"[board_scraper] skipping {name}: no url configured in job_boards.json")
+            logger.info("skipping %s: no url configured in job_boards.json", name)
+            continue
+        fetcher = _BOARD_FETCHERS.get(name)
+        if fetcher is None:
+            logger.warning("unknown board %s, skipping", name)
             continue
         try:
-            if name == "hiringcafe":
-                jobs = await fetch_hiringcafe(url)
-            elif name == "handshake":
-                jobs = await fetch_handshake(url)
-            elif name == "jobright":
-                jobs = await fetch_jobright(url)
-            elif name == "simplify":
-                jobs = await fetch_simplify(url)
-            else:
-                print(f"[board_scraper] unknown board {name}, skipping")
-                continue
+            jobs, ok = await fetcher(url)
         except NotImplementedError as e:
-            print(f"[board_scraper] {name} not implemented yet: {e}")
+            logger.info("%s not implemented yet: %s", name, e)
             continue
+        except Exception as e:
+            # One bad board should never block the others in the same run
+            # (see module docstring) — any exception a real fetch_* raises
+            # (expired session, timeout, ...) is caught here, not just the
+            # NotImplementedError stubs above.
+            logger.error("%s fetch failed: %s", name, e)
+            health = state.record_health(health, name, False)
+            continue
+        health = state.record_health(health, name, ok, len(jobs))
         all_jobs.extend(jobs)
         await asyncio.sleep(random.uniform(1.5, 3.0))
 
-    all_jobs.extend(await fetch_newgrad_minisite())
+    newgrad_jobs, newgrad_ok = await fetch_newgrad_minisite()
+    health = state.record_health(health, "newgrad-jobs", newgrad_ok, len(newgrad_jobs))
+    all_jobs.extend(newgrad_jobs)
 
+    google_ok = True
+    google_job_count = 0
     for domain in ATS_DOMAINS:
-        all_jobs.extend(await fetch_google_boolean(domain))
+        jobs, ok = await fetch_google_boolean(domain)
+        google_ok = google_ok and ok
+        google_job_count += len(jobs)
+        all_jobs.extend(jobs)
         await asyncio.sleep(random.uniform(1.5, 3.0))
+    health = state.record_health(health, "google-search", google_ok, google_job_count)
+    state.save_health(health)
 
     with open(output_path, "w") as f:
         json.dump(all_jobs, f, ensure_ascii=False, indent=2)
-    print(f"[board_scraper] wrote {len(all_jobs)} job(s) to {output_path}")
+    logger.info("wrote %d job(s) to %s", len(all_jobs), output_path)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="[board_scraper] %(levelname)s %(message)s")
     ap = argparse.ArgumentParser(description="Daily job-board aggregator scraper")
     ap.add_argument("--boards", required=True, help="path to data/job_boards.json")
     ap.add_argument("--output", default="board_jobs.json", help="where to write scraped jobs")

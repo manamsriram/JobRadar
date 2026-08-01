@@ -293,7 +293,7 @@ async def _process(jobs: list[dict], seen: dict, companies: list[dict], seed_mod
             continue
         dup_id = state.find_cross_source_duplicate(seen, job)
         if dup_id:
-            sources = seen[dup_id].setdefault("sources", [seen[dup_id]["source"]])
+            sources = seen[dup_id].setdefault("sources", [seen[dup_id].get("source", "unknown")])
             if job["source"] not in sources:
                 sources.append(job["source"])
             continue

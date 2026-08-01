@@ -85,7 +85,7 @@ def find_cross_source_duplicate(seen: dict, job: dict) -> str | None:
     (hundreds, not millions, of rows)."""
     company = (job.get("company") or "").strip().lower()
     title = (job.get("title") or "").strip().lower()
-    if not company or not title:
+    if not company or company == "unknown" or not title:
         return None
     location = (job.get("location") or "").strip().lower()
     key = (company, title, location)
