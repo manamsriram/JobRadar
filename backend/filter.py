@@ -23,7 +23,7 @@ from config import (
 # Kept as-is for backward compatibility with any external caller that
 # reads `_YEARS_RE` directly.
 _YEARS_RE = re.compile(
-    r"(\d+)[\s)]{0,3}\+?[\s)]{0,3}(?:-|to)?[\s)]{0,3}(\d+)?[\s)]{0,3}\+?[\s)]{0,3}(?:years?|yrs?)"
+    r"(\d{1,3})[\s)]{0,3}\+?[\s)]{0,3}(?:-|to)?[\s)]{0,3}(\d{1,3})?[\s)]{0,3}\+?[\s)]{0,3}(?:years?|yrs?)"
 )
 
 # English number words 0-99 — anything above the years cap (default 2)
