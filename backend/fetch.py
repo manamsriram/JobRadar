@@ -8,6 +8,8 @@ import random
 
 import httpx
 
+from net_safety import is_safe_url
+
 _RETRYABLE_STATUS = {500, 502, 503, 504}
 
 
@@ -28,6 +30,8 @@ class RetryBudget:
 async def fetch_with_retry(
     client: httpx.AsyncClient, url: str, *, retries: int = 2, timeout: float = 15
 ) -> httpx.Response:
+    if not is_safe_url(url):
+        raise httpx.UnsupportedProtocol(f"refusing to fetch unsafe URL: {url}")
     attempt = 0
     while True:
         try:

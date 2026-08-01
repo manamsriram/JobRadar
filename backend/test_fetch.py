@@ -7,7 +7,16 @@ import asyncio
 import httpx
 import pytest
 
+import fetch
 from fetch import RetryBudget, fetch_with_retry
+
+
+@pytest.fixture(autouse=True)
+def _skip_ssrf_check(monkeypatch):
+    # These tests exercise retry/backoff logic against example.test (RFC 2606,
+    # doesn't resolve) via a fake client — SSRF resolution itself is covered
+    # by test_net_safety.py.
+    monkeypatch.setattr(fetch, "is_safe_url", lambda url: True)
 
 
 def test_retry_budget_caps_at_remaining():
@@ -73,6 +82,13 @@ def test_fetch_with_retry_gives_up_after_budget(monkeypatch):
 
 async def _noop():
     return None
+
+
+def test_fetch_with_retry_rejects_unsafe_url(monkeypatch):
+    monkeypatch.setattr(fetch, "is_safe_url", lambda url: False)
+    client = _FakeClient([200])
+    with pytest.raises(httpx.UnsupportedProtocol):
+        asyncio.run(fetch_with_retry(client, "unsafe-placeholder"))
 
 
 if __name__ == "__main__":
