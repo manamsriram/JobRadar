@@ -34,6 +34,8 @@ async def _get_validating_redirects(
     """GET with redirects followed manually so every hop — not just the
     initial URL — passes is_safe_url. `follow_redirects=True` alone would
     let a "safe" host 302 to a private/loopback/metadata address."""
+    if not is_safe_url(url):
+        raise httpx.UnsupportedProtocol(f"refusing to fetch unsafe URL: {url}")
     r = await client.get(url, timeout=timeout, follow_redirects=False)
     hops = 0
     while getattr(r, "next_request", None) is not None:
@@ -50,8 +52,6 @@ async def _get_validating_redirects(
 async def fetch_with_retry(
     client: httpx.AsyncClient, url: str, *, retries: int = 2, timeout: float = 15
 ) -> httpx.Response:
-    if not is_safe_url(url):
-        raise httpx.UnsupportedProtocol(f"refusing to fetch unsafe URL: {url}")
     attempt = 0
     while True:
         try:
