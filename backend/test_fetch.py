@@ -33,9 +33,10 @@ def test_retry_budget_never_goes_negative():
 
 
 class _FakeResponse:
-    def __init__(self, status_code=200, request=None):
+    def __init__(self, status_code=200, request=None, next_request=None):
         self.status_code = status_code
         self.request = request
+        self.next_request = next_request
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -43,12 +44,18 @@ class _FakeResponse:
 
 
 class _FakeClient:
-    def __init__(self, statuses):
+    def __init__(self, statuses, redirect_to=None):
         self._statuses = list(statuses)
+        self._redirect_to = redirect_to
 
     async def get(self, url, **kw):
         code = self._statuses.pop(0)
-        return _FakeResponse(code, request=httpx.Request("GET", url))
+        next_request = httpx.Request("GET", self._redirect_to) if self._redirect_to else None
+        return _FakeResponse(code, request=httpx.Request("GET", url), next_request=next_request)
+
+    async def send(self, request, **kw):
+        code = self._statuses.pop(0)
+        return _FakeResponse(code, request=request)
 
 
 def test_fetch_with_retry_succeeds_first_try(monkeypatch):
@@ -89,6 +96,25 @@ def test_fetch_with_retry_rejects_unsafe_url(monkeypatch):
     client = _FakeClient([200])
     with pytest.raises(httpx.UnsupportedProtocol):
         asyncio.run(fetch_with_retry(client, "unsafe-placeholder"))
+
+
+def test_fetch_with_retry_follows_safe_redirect(monkeypatch):
+    monkeypatch.setattr(asyncio, "sleep", lambda *a: _noop())
+    client = _FakeClient([302, 200], redirect_to="https://example.test/landed")
+    r = asyncio.run(fetch_with_retry(client, "https://example.test/"))
+    assert r.status_code == 200
+
+
+def test_fetch_with_retry_rejects_unsafe_redirect_target(monkeypatch):
+    monkeypatch.setattr(asyncio, "sleep", lambda *a: _noop())
+
+    def only_first_host_safe(url):
+        return "169.254.169.254" not in url
+
+    monkeypatch.setattr(fetch, "is_safe_url", only_first_host_safe)
+    client = _FakeClient([302], redirect_to="http://169.254.169.254/latest/meta-data/")
+    with pytest.raises(httpx.UnsupportedProtocol):
+        asyncio.run(fetch_with_retry(client, "https://example.test/"))
 
 
 if __name__ == "__main__":
