@@ -86,21 +86,22 @@ async def fetch_hiringcafe(url: str) -> tuple[list[dict], bool]:
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(args=_LAUNCH_ARGS)
-            page = await browser.new_page(user_agent=_UA)
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            try:
-                await page.wait_for_selector(
-                    "div.relative.bg-white.rounded-xl.border", timeout=10000
-                )
-            except Exception:
-                logger.warning("hiringcafe: selector wait timed out, parsing whatever loaded")
-            await page.wait_for_timeout(random.randint(1500, 3000))
-            html = await page.content()
-            await browser.close()
+            async with browser:
+                page = await browser.new_page(user_agent=_UA)
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    await page.wait_for_selector(
+                        "div.relative.bg-white.rounded-xl.border", timeout=10000
+                    )
+                except Exception:
+                    logger.warning("hiringcafe: selector wait timed out, parsing whatever loaded")
+                await page.wait_for_timeout(random.randint(1500, 3000))
+                html = await page.content()
+                jobs = _parse_hiringcafe(html, url)
     except Exception as e:
         logger.error("error scraping hiringcafe: %s", e)
         return [], False
-    return _parse_hiringcafe(html, url), True
+    return jobs, True
 
 
 # ---- Jobright new-grad minisite ----
@@ -151,24 +152,24 @@ async def fetch_newgrad_minisite() -> tuple[list[dict], bool]:
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(args=_LAUNCH_ARGS)
-            page = await browser.new_page(user_agent=_UA)
-            await page.goto(NEWGRAD_MINISITE_URL, wait_until="domcontentloaded", timeout=30000)
-            try:
-                await page.wait_for_selector("tr[class*='tableRow']", timeout=10000)
-            except Exception:
-                logger.warning("newgrad minisite: selector wait timed out, parsing whatever loaded")
-            stale_rounds = 0
-            for _ in range(30):
-                html = await page.content()
-                before = len(all_jobs)
-                for j in _parse_newgrad_rows(html):
-                    all_jobs[j["id"]] = j
-                stale_rounds = stale_rounds + 1 if len(all_jobs) == before else 0
-                if stale_rounds >= 3:
-                    break
-                await page.mouse.wheel(0, 800)
-                await page.wait_for_timeout(random.randint(400, 800))
-            await browser.close()
+            async with browser:
+                page = await browser.new_page(user_agent=_UA)
+                await page.goto(NEWGRAD_MINISITE_URL, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    await page.wait_for_selector("tr[class*='tableRow']", timeout=10000)
+                except Exception:
+                    logger.warning("newgrad minisite: selector wait timed out, parsing whatever loaded")
+                stale_rounds = 0
+                for _ in range(30):
+                    html = await page.content()
+                    before = len(all_jobs)
+                    for j in _parse_newgrad_rows(html):
+                        all_jobs[j["id"]] = j
+                    stale_rounds = stale_rounds + 1 if len(all_jobs) == before else 0
+                    if stale_rounds >= 3:
+                        break
+                    await page.mouse.wheel(0, 800)
+                    await page.wait_for_timeout(random.randint(400, 800))
     except Exception as e:
         logger.error("error scraping newgrad minisite: %s", e)
         return list(all_jobs.values()), False
@@ -236,18 +237,25 @@ async def fetch_google_boolean(domain: str) -> tuple[list[dict], bool]:
     """Returns (jobs, ok) — see fetch_hiringcafe. A CAPTCHA block counts as
     ok=False: it's a genuine fetch-level failure (confirmed-common for this
     source), not a "0 jobs matched" case, so it should surface as such."""
-    url = _build_google_query(domain)
     try:
+        url = _build_google_query(domain)
         async with httpx.AsyncClient(headers={"User-Agent": _UA}, follow_redirects=True) as client:
             r = await client.get(url, timeout=15)
             r.raise_for_status()
     except httpx.HTTPError as e:
         logger.warning("google search failed for %s: %s", domain, e)
         return [], False
+    except Exception as e:
+        logger.error("google search query/build failed for %s: %s", domain, e)
+        return [], False
     if "google.com/sorry" in str(r.url):
         logger.warning("google search blocked (CAPTCHA) for %s", domain)
         return [], False
-    return _parse_google_serp(r.text, domain), True
+    try:
+        return _parse_google_serp(r.text, domain), True
+    except Exception as e:
+        logger.error("google SERP parse failed for %s: %s", domain, e)
+        return [], False
 
 
 # ---- Login-gated boards ----
@@ -369,15 +377,19 @@ async def _run(boards_path: str, output_path: str) -> None:
     health = state.record_health(health, "newgrad-jobs", newgrad_ok, len(newgrad_jobs))
     all_jobs.extend(newgrad_jobs)
 
-    google_ok = True
+    google_any_ok = False
     google_job_count = 0
     for domain in ATS_DOMAINS:
         jobs, ok = await fetch_google_boolean(domain)
-        google_ok = google_ok and ok
+        google_any_ok = google_any_ok or ok
         google_job_count += len(jobs)
         all_jobs.extend(jobs)
         await asyncio.sleep(random.uniform(1.5, 3.0))
-    health = state.record_health(health, "google-search", google_ok, google_job_count)
+    # At-least-one-success policy: individual domains hit CAPTCHA often
+    # (see fetch_google_boolean docstring), so ANDing all of them would mark
+    # google-search unhealthy on nearly every run — one live domain is enough
+    # to call the source itself up.
+    health = state.record_health(health, "google-search", google_any_ok, google_job_count)
     state.save_health(health)
 
     with open(output_path, "w") as f:
