@@ -92,31 +92,49 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
   return (
     <table className="w-full text-sm border-collapse">
       <thead>
-        <tr className="bg-gray-100 text-left">
-          <th className="p-2">Title</th>
-          <th className="p-2">Company</th>
-          <th className="p-2">Location</th>
-          <th className="p-2">Source</th>
-          <th className="p-2">Posted</th>
-          <th className="p-2">Fit</th>
-          <th className="p-2">Apply</th>
-          <th className="p-2">{mode === "applied" ? "Remove" : "Applied?"}</th>
+        <tr className="text-left border-b-2 border-black">
+          <th className="p-2 font-mono text-[10px] tracking-widest text-gray-500 uppercase w-12">
+            No.
+          </th>
+          <th className="p-2 font-mono text-[10px] tracking-widest text-gray-500 uppercase">
+            Role
+          </th>
+          <th className="p-2 font-mono text-[10px] tracking-widest text-gray-500 uppercase">
+            Location
+          </th>
+          <th className="p-2 font-mono text-[10px] tracking-widest text-gray-500 uppercase">
+            Source
+          </th>
+          <th className="p-2 font-mono text-[10px] tracking-widest text-gray-500 uppercase">
+            Posted
+          </th>
+          <th className="p-2 font-mono text-[10px] tracking-widest text-gray-500 uppercase">
+            Fit
+          </th>
+          <th className="p-2 font-mono text-[10px] tracking-widest text-gray-500 uppercase">
+            Actions
+          </th>
         </tr>
       </thead>
       <tbody>
-        {jobs.map((job) => {
+        {jobs.map((job, i) => {
           const isApplied = job.applied || applied.has(job.id);
           return (
             <Fragment key={job.id}>
               <tr
-                className="border-b hover:bg-yellow-50 transition cursor-pointer"
+                className="border-b border-gray-300 hover:bg-cream-field transition cursor-pointer align-top"
                 onClick={() => setExpanded(expanded === job.id ? null : job.id)}
               >
-                <td className="p-2 font-medium">{job.title}</td>
-                <td className="p-2">{job.company}</td>
+                <td className="p-2 font-display text-xl font-bold text-gray-900">
+                  #{i + 1}
+                </td>
+                <td className="p-2">
+                  <h3 className="font-display font-semibold">{job.company}</h3>
+                  <p className="text-gray-700">{job.title}</p>
+                </td>
                 <td className="p-2 text-gray-500">{job.location}</td>
                 <td className="p-2">
-                  <span className="inline-block px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 text-xs">
+                  <span className="inline-block px-2 py-0.5 border border-gray-400 font-mono text-[10px] uppercase tracking-wide text-gray-700">
                     {SOURCE_LABELS[job.source ?? ""] ?? job.source ?? "—"}
                   </span>
                 </td>
@@ -128,7 +146,7 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
                 <td className="p-2">
                   {job.ai_score != null && (
                     <span
-                      className="inline-block px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs"
+                      className="inline-block px-2 py-0.5 border border-blue-400 font-mono text-[10px] uppercase tracking-wide text-blue-700"
                       title={job.ai_reason ?? ""}
                     >
                       {job.ai_score}/100 · {job.ai_resume}
@@ -136,18 +154,18 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
                   )}
                 </td>
                 <td className="p-2">
-                  <div className="flex flex-col gap-1 items-start">
+                  <div className="flex flex-wrap gap-1.5 items-center">
                     <a
                       href={job.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-blue-600 hover:underline"
+                      className="px-3 py-1 bg-black text-cream font-mono text-[10px] uppercase tracking-wide hover:bg-gray-800"
                       onClick={(e) => e.stopPropagation()}
                     >
                       Apply →
                     </a>
                     <button
-                      className="text-gray-500 hover:text-blue-600 hover:underline text-xs disabled:opacity-50"
+                      className="px-2 py-1 border border-gray-400 font-mono text-[10px] uppercase tracking-wide text-gray-600 hover:border-black hover:text-black disabled:opacity-50"
                       disabled={contactBusy === job.id}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -157,35 +175,35 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
                       {contactBusy === job.id
                         ? "Finding…"
                         : (contactResults[job.id]?.contacts.length ?? job.contacts?.length ?? 0) > 0
-                          ? "Find Another Contact"
-                          : "Find Contacts"}
+                          ? "More contacts"
+                          : "Contacts"}
                     </button>
+                    {mode === "applied" ? (
+                      <button
+                        className="px-2 py-1 border border-gray-400 font-mono text-[10px] uppercase tracking-wide text-gray-600 hover:border-red-600 hover:text-red-600"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete?.(job.id);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    ) : isApplied ? (
+                      <span className="font-mono text-[10px] uppercase tracking-wide text-green-700">
+                        ✓ Applied
+                      </span>
+                    ) : (
+                      <button
+                        className="px-2 py-1 border border-gray-400 font-mono text-[10px] uppercase tracking-wide text-gray-600 hover:border-green-600 hover:text-green-700"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          markApplied(job.id);
+                        }}
+                      >
+                        Mark applied
+                      </button>
+                    )}
                   </div>
-                </td>
-                <td className="p-2">
-                  {mode === "applied" ? (
-                    <button
-                      className="text-gray-500 hover:text-red-600 hover:underline"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete?.(job.id);
-                      }}
-                    >
-                      Remove
-                    </button>
-                  ) : isApplied ? (
-                    <span className="text-green-600">✓ Applied</span>
-                  ) : (
-                    <button
-                      className="text-gray-500 hover:text-green-600 hover:underline"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        markApplied(job.id);
-                      }}
-                    >
-                      Mark applied
-                    </button>
-                  )}
                 </td>
               </tr>
               {expanded === job.id && (() => {
@@ -195,7 +213,7 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
                 if (!job.description && contacts.length === 0 && !error) return null;
                 return (
                   <tr>
-                    <td colSpan={8} className="bg-gray-50 px-4 py-2">
+                    <td colSpan={7} className="bg-cream-field px-4 py-3 border-b border-gray-300">
                       {job.description && (
                         <p className="text-gray-600 whitespace-pre-line mb-3 max-h-60 overflow-y-auto">
                           {job.description}
@@ -209,8 +227,8 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
                             </p>
                           )}
                           <div className="flex gap-3 flex-wrap items-start">
-                            {contacts.map((contact, i) => (
-                              <div key={i} className="flex flex-col gap-1 items-start">
+                            {contacts.map((contact, ci) => (
+                              <div key={ci} className="flex flex-col gap-1 items-start">
                                 <ContactCard contact={contact} />
                                 <a
                                   href={`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(

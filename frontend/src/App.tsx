@@ -63,48 +63,50 @@ export default function App() {
   });
 
   return (
-    <div className="max-w-5xl mx-auto p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">JobRadar</h1>
-        <div className="flex items-center gap-3">
-          <SourceHealth />
-          <LiveBadge count={liveJobs.length} />
+    <div className="min-h-screen bg-cream font-sans text-gray-900">
+      <div className="max-w-5xl mx-auto p-6">
+        <div className="flex items-center justify-between border-b border-black pb-4 mb-6">
+          <div>
+            <p className="font-mono text-xs tracking-widest text-gray-500 uppercase mb-1">
+              Self-hosted job radar
+            </p>
+            <h1 className="font-display text-2xl font-bold">JobRadar</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            <SourceHealth />
+            <LiveBadge count={liveJobs.length} />
+          </div>
         </div>
+        <ResumePanel />
+        <div className="flex gap-2 mb-6">
+          {(["active", "applied", "pipeline"] as Tab[]).map((t) => (
+            <button
+              key={t}
+              className={`font-mono text-xs uppercase tracking-wider px-3 py-1.5 border ${
+                tab === t
+                  ? "border-black bg-black text-cream"
+                  : "border-gray-300 text-gray-500 hover:border-black hover:text-black"
+              }`}
+              onClick={() => setTab(t)}
+            >
+              {t === "active" ? "Jobs" : t === "applied" ? "Applied" : "Pipeline"}
+            </button>
+          ))}
+        </div>
+        {tab === "pipeline" ? (
+          <PipelineBoard />
+        ) : (
+          <>
+            <FilterBar filters={filters} onChange={setFilters} />
+            <JobTable
+              jobs={filtered}
+              mode={tab}
+              onApplied={handleApplied}
+              onDelete={handleDelete}
+            />
+          </>
+        )}
       </div>
-      <ResumePanel />
-      <div className="flex gap-4 border-b mb-4">
-        <button
-          className={`pb-2 px-1 ${tab === "active" ? "border-b-2 border-blue-600 font-medium" : "text-gray-500"}`}
-          onClick={() => setTab("active")}
-        >
-          Jobs
-        </button>
-        <button
-          className={`pb-2 px-1 ${tab === "applied" ? "border-b-2 border-blue-600 font-medium" : "text-gray-500"}`}
-          onClick={() => setTab("applied")}
-        >
-          Applied
-        </button>
-        <button
-          className={`pb-2 px-1 ${tab === "pipeline" ? "border-b-2 border-blue-600 font-medium" : "text-gray-500"}`}
-          onClick={() => setTab("pipeline")}
-        >
-          Pipeline
-        </button>
-      </div>
-      {tab === "pipeline" ? (
-        <PipelineBoard />
-      ) : (
-        <>
-          <FilterBar filters={filters} onChange={setFilters} />
-          <JobTable
-            jobs={filtered}
-            mode={tab}
-            onApplied={handleApplied}
-            onDelete={handleDelete}
-          />
-        </>
-      )}
     </div>
   );
 }
