@@ -20,12 +20,14 @@ import json
 import logging
 import os
 import random
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urljoin
 
 from bs4 import BeautifulSoup
 import httpx
 from playwright.async_api import async_playwright
 
+import search_api
 import state
 
 logger = logging.getLogger(__name__)
@@ -177,17 +179,31 @@ async def fetch_newgrad_minisite() -> tuple[list[dict], bool]:
 
 
 # ---- Google boolean search across ATS domains ----
-# Modeled directly on briansjobsearch.com's own approach (confirmed
-# 2026-07-31 by driving its UI): one query PER DOMAIN using Google's native
-# tbs=qdr:d (past-24h) filter, rather than one big OR-chain across all
-# domains — Google truncates long queries and a multi-domain OR chain
-# returned unreliable results in manual testing.
+# Runs on its own every-3h workflow (.github/workflows/google_search.yml),
+# separate from the daily board run — the login-gated boards use a saved
+# session that shouldn't be hammered, but this source has no such constraint.
 #
-# CONFIRMED RISK: a single manual request to Google for this exact kind of
-# query was redirected straight to google.com/sorry (CAPTCHA wall) on the
-# first attempt, no warm-up. Sriram's explicit call: ship this anyway,
-# best-effort — expect it to return [] most days from a GitHub Actions IP.
-# Never let a blocked/failed query raise past this function.
+# QUERY SHAPE: Google silently truncates queries past 32 words ("Word (and
+# any subsequent words) was ignored because we limit queries to 32 words").
+# The full filter set is far past that: 34 title alternatives OR'd = 107
+# words, plus 14 site: terms and the exclude list. An earlier all-in-one
+# OR-chain therefore lost most of its terms and returned unreliable results.
+#
+# So each run emits a few queries that each fit the cap: one rotating group
+# of titles, packed with as many site: domains as the remaining budget
+# allows. The title group rotates by UTC hour, so consecutive runs across a
+# day cover the whole title list without persisting a cursor anywhere.
+# Losing query-side precision is cheap here: _process()'s ROLE_FILTERS regex
+# re-filters every job by title anyway, so the query only has to be broad
+# enough to surface the postings, not narrow enough to be the final filter.
+#
+# CONFIRMED RISK: a manual request for this exact kind of query was
+# redirected straight to google.com/sorry (CAPTCHA wall) on the first
+# attempt, no warm-up. Mitigated (not solved) by running through real
+# Chromium rather than httpx, and by backing off for
+# GOOGLE_BLOCK_BACKOFF_HOURS after a block instead of re-hammering the wall.
+# Still best-effort: expect [] on plenty of runs. Never raises past
+# fetch_google_boolean.
 ATS_DOMAINS = [
     "lever.co", "greenhouse.io", "ashbyhq.com", "app.dover.io", "breezy.hr",
     "careerpuck.com", "jobs.smartrecruiters.com", "apply.workable.com",
@@ -196,33 +212,129 @@ ATS_DOMAINS = [
 ]
 _GOOGLE_EXCLUDE_TERMS = ["senior", "staff", "principal", "lead", "manager", "director"]
 
+# Google's documented cap. Counted conservatively: every whitespace-separated
+# token counts, including each OR and each -exclude. Google excludes stop
+# words and may not charge for operators at all, so a query that fits this
+# counter is safely under the real limit rather than near it.
+GOOGLE_MAX_QUERY_TOKENS = int(os.getenv("GOOGLE_MAX_QUERY_TOKENS", "32"))
+# ponytail: whitespace tokens, not Google's real tokenizer — deliberately
+# over-counts. Tighten only if runs come back provably under-packed.
+def _token_count(q: str) -> int:
+    return len(q.split())
 
-def _build_google_query(domain: str) -> str:
+
+def _title_groups(titles: list[str], per_group: int = 5) -> list[list[str]]:
+    """Partition the title list into fixed-size groups. Every title lands in
+    exactly one group, so rotating through groups covers the full list."""
+    return [titles[i:i + per_group] for i in range(0, len(titles), per_group)]
+
+
+def _quote(term: str) -> str:
+    term = term.strip()
+    return f'"{term}"' if " " in term else term
+
+
+def _build_google_queries(titles: list[str], domains: list[str]) -> list[str]:
+    """One query per domain batch: a fixed title OR-chain plus as many
+    site: terms as fit under GOOGLE_MAX_QUERY_TOKENS. Excludes are added
+    only while they still fit — they are a nicety, the Python-side
+    ROLE_FILTERS exclude list is what actually enforces them."""
+    title_clause = "(" + " OR ".join(_quote(t) for t in titles) + ")"
+    queries: list[str] = []
+    batch: list[str] = []
+
+    def flush() -> None:
+        if not batch:
+            return
+        q = f"{title_clause} (" + " OR ".join(f"site:{d}" for d in batch) + ")"
+        for word in _GOOGLE_EXCLUDE_TERMS:
+            candidate = f"{q} -{word}"
+            if _token_count(candidate) > GOOGLE_MAX_QUERY_TOKENS:
+                break
+            q = candidate
+        queries.append(q)
+
+    for domain in domains:
+        trial = batch + [domain]
+        probe = f"{title_clause} (" + " OR ".join(f"site:{d}" for d in trial) + ")"
+        if batch and _token_count(probe) > GOOGLE_MAX_QUERY_TOKENS:
+            flush()
+            batch = [domain]
+        else:
+            batch = trial
+    flush()
+    return queries
+
+
+def plan_google_queries(hour: int | None = None) -> list[str]:
+    """The queries for this run. The title group rotates by UTC hour so a
+    3-hourly schedule walks the whole title list across the day with no
+    stored cursor."""
     from config import ROLE_FILTERS
-    titles = " OR ".join(
-        f'"{t}"' if " " in t else t for t in ROLE_FILTERS["titles"]
-    )
-    excludes = " ".join(f"-{w}" for w in _GOOGLE_EXCLUDE_TERMS)
-    q = f"({titles}) site:{domain} {excludes}"
-    return "https://www.google.com/search?" + urlencode({"q": q, "tbs": "qdr:d"})
+    groups = _title_groups(ROLE_FILTERS["titles"])
+    if hour is None:
+        hour = datetime.now(timezone.utc).hour
+    return _build_google_queries(groups[hour % len(groups)], ATS_DOMAINS)
 
 
-def _parse_google_serp(html: str, domain: str) -> list[dict]:
-    """Doesn't depend on Google's SERP HTML structure at all (unverifiable
-    — blocked before rendering during design) — scans every <a href> and
-    keeps only links whose URL contains the target ATS domain. Link text
-    becomes the job's title as-is; unlike other sources, _process() never
-    re-fetches/replaces title from the job's own page (only description),
-    so a noisy SERP snippet can persist as the shown title. Accepted
-    trade-off — the existing regex title filter still runs against it."""
-    soup = BeautifulSoup(html, "html.parser")
+def _search_url(query: str) -> str:
+    # tbs=qdr:d — past 24h only, same filter briansjobsearch.com uses.
+    return "https://www.google.com/search?" + urlencode({"q": query, "tbs": "qdr:d"})
+
+
+# ---- CAPTCHA backoff ----
+# Piggybacks on the existing source_health entry rather than adding another
+# state file: a block writes `blocked_until`, and the next run skips Google
+# entirely until it passes. Without this, a 3-hourly schedule would keep
+# knocking on a wall that has already said no.
+GOOGLE_BLOCK_BACKOFF_HOURS = int(os.getenv("GOOGLE_BLOCK_BACKOFF_HOURS", "6"))
+GOOGLE_HEALTH_KEY = "google-search"
+
+
+def google_blocked_until(health: dict) -> str | None:
+    return (health.get(GOOGLE_HEALTH_KEY) or {}).get("blocked_until")
+
+
+def is_google_backing_off(health: dict, now: datetime | None = None) -> bool:
+    until = google_blocked_until(health)
+    if not until:
+        return False
+    try:
+        return (now or datetime.now(timezone.utc)) < datetime.fromisoformat(until)
+    except ValueError:
+        # Corrupt timestamp shouldn't wedge the source off forever.
+        logger.warning("google backoff: unparseable blocked_until %r, ignoring", until)
+        return False
+
+
+def mark_google_blocked(health: dict, now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    entry = health.get(GOOGLE_HEALTH_KEY, {})
+    entry["blocked_until"] = (now + timedelta(hours=GOOGLE_BLOCK_BACKOFF_HOURS)).isoformat()
+    health[GOOGLE_HEALTH_KEY] = entry
+    return health
+
+
+def clear_google_block(health: dict) -> dict:
+    entry = health.get(GOOGLE_HEALTH_KEY)
+    if entry:
+        entry.pop("blocked_until", None)
+    return health
+
+
+def _jobs_from_results(results: list[dict], domains: list[str]) -> list[dict]:
+    """Keep only results pointing at one of the target ATS domains. The result
+    title is used as-is: unlike other sources, _process() never re-fetches the
+    title from the job's own page (only the description), so a noisy SERP
+    title can persist as the shown title. Accepted trade-off — the existing
+    ROLE_FILTERS regex still re-filters every job by title."""
     jobs, seen = [], set()
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if domain not in href or not href.startswith("http") or href in seen:
+    for r in results:
+        href = r.get("url") or ""
+        title = (r.get("title") or "").strip()
+        if href in seen or len(title) < 5:
             continue
-        title = a.get_text(strip=True)
-        if len(title) < 5:
+        if not any(d in href for d in domains):
             continue
         seen.add(href)
         jobs.append({
@@ -233,29 +345,57 @@ def _parse_google_serp(html: str, domain: str) -> list[dict]:
     return jobs
 
 
-async def fetch_google_boolean(domain: str) -> tuple[list[dict], bool]:
-    """Returns (jobs, ok) — see fetch_hiringcafe. A CAPTCHA block counts as
-    ok=False: it's a genuine fetch-level failure (confirmed-common for this
-    source), not a "0 jobs matched" case, so it should surface as such."""
+def _parse_google_serp(html: str, domains: list[str]) -> list[dict]:
+    """Kept for the raw-HTML path (the Playwright fallback backend) and its
+    tests; the API backends hand back results directly."""
+    return _jobs_from_results(search_api.parse_serp_anchors(html), domains)
+
+
+def _is_captcha(url: str, html: str) -> bool:
+    return "google.com/sorry" in url or "/sorry/index" in html
+
+
+async def fetch_google_boolean(query: str, domains: list[str]) -> tuple[list[dict], bool, bool]:
+    """Run one query through search_api (Serper → DuckDuckGo → Chromium).
+    Returns (jobs, ok, blocked) — see fetch_hiringcafe for `ok`; `blocked`
+    means every backend was challenged, so the caller should back the whole
+    source off rather than burning the rest of the run's queries."""
+    results, ok, blocked = await search_api.search(query, days=1)
+    if blocked:
+        logger.warning("google search blocked — backing off %dh", GOOGLE_BLOCK_BACKOFF_HOURS)
+        return [], False, True
+    if not ok:
+        return [], False, False
     try:
-        url = _build_google_query(domain)
-        async with httpx.AsyncClient(headers={"User-Agent": _UA}, follow_redirects=True) as client:
-            r = await client.get(url, timeout=15)
-            r.raise_for_status()
-    except httpx.HTTPError as e:
-        logger.warning("google search failed for %s: %s", domain, e)
-        return [], False
+        return _jobs_from_results(results, domains), True, False
     except Exception as e:
-        logger.error("google search query/build failed for %s: %s", domain, e)
-        return [], False
-    if "google.com/sorry" in str(r.url):
-        logger.warning("google search blocked (CAPTCHA) for %s", domain)
-        return [], False
-    try:
-        return _parse_google_serp(r.text, domain), True
-    except Exception as e:
-        logger.error("google SERP parse failed for %s: %s", domain, e)
-        return [], False
+        logger.error("google SERP parse failed: %s", e)
+        return [], False, False
+
+
+async def run_google_search(health: dict) -> tuple[list[dict], dict]:
+    """Whole Google source for one run: skip if backing off, else walk this
+    hour's queries, stopping early on a CAPTCHA. Returns (jobs, health)."""
+    if is_google_backing_off(health):
+        logger.info("google search skipped: backing off until %s", google_blocked_until(health))
+        return [], health
+
+    jobs: list[dict] = []
+    any_ok = False
+    for query in plan_google_queries():
+        found, ok, blocked = await fetch_google_boolean(query, ATS_DOMAINS)
+        any_ok = any_ok or ok
+        jobs.extend(found)
+        if blocked:
+            health = mark_google_blocked(health)
+            break
+        await asyncio.sleep(random.uniform(1.5, 3.0))
+
+    if any_ok:
+        health = clear_google_block(health)
+    # At-least-one-success policy: a single blocked query shouldn't mark the
+    # whole source down when the others came back fine.
+    return jobs, state.record_health(health, GOOGLE_HEALTH_KEY, any_ok, len(jobs))
 
 
 # ---- Login-gated boards ----
@@ -327,12 +467,14 @@ async def fetch_simplify(url: str) -> list[dict]:
 
 
 # ---- GitHub Action entrypoint ----
-# Invoked by .github/workflows/job_boards_scraper.yml:
-#   python -m scrapers.board_scraper --boards ../data/job_boards.json --output board_jobs.json
-# The workflow then POSTs board_jobs.json to /api/ingest, same as
-# playwright_scraper.py — but on its own daily schedule, not the existing
-# 30-minute one (see the workflow file for why: login-session risk and the
-# confirmed Google CAPTCHA block both favor low frequency here).
+# Two workflows share this entrypoint, on different schedules, via --sources:
+#   job_boards_scraper.yml (daily)   --sources boards --boards ../data/job_boards.json
+#   google_search.yml      (every 3h) --sources google
+# Both POST their output to /api/ingest, same as playwright_scraper.py. The
+# boards stay daily because they ride a saved login session that shouldn't be
+# hammered; Google runs more often because fresher ATS postings are the whole
+# point of it, and its own CAPTCHA backoff (not the schedule) is what keeps
+# the request rate sane.
 _BOARD_FETCHERS = {
     "hiringcafe": fetch_hiringcafe,
     "handshake": fetch_handshake,
@@ -341,55 +483,47 @@ _BOARD_FETCHERS = {
 }
 
 
-async def _run(boards_path: str, output_path: str) -> None:
-    with open(boards_path) as f:
-        boards = json.load(f)
+async def _run(boards_path: str, output_path: str, sources: str = "all") -> None:
     all_jobs: list[dict] = []
     health = state.load_health()
 
-    for board in boards:
-        name, url = board.get("name"), board.get("url")
-        if not url:
-            logger.info("skipping %s: no url configured in job_boards.json", name)
-            continue
-        fetcher = _BOARD_FETCHERS.get(name)
-        if fetcher is None:
-            logger.warning("unknown board %s, skipping", name)
-            continue
-        try:
-            jobs, ok = await fetcher(url)
-        except NotImplementedError as e:
-            logger.info("%s not implemented yet: %s", name, e)
-            continue
-        except Exception as e:
-            # One bad board should never block the others in the same run
-            # (see module docstring) — any exception a real fetch_* raises
-            # (expired session, timeout, ...) is caught here, not just the
-            # NotImplementedError stubs above.
-            logger.error("%s fetch failed: %s", name, e)
-            health = state.record_health(health, name, False)
-            continue
-        health = state.record_health(health, name, ok, len(jobs))
-        all_jobs.extend(jobs)
-        await asyncio.sleep(random.uniform(1.5, 3.0))
+    if sources in ("all", "boards"):
+        with open(boards_path) as f:
+            boards = json.load(f)
+        for board in boards:
+            name, url = board.get("name"), board.get("url")
+            if not url:
+                logger.info("skipping %s: no url configured in job_boards.json", name)
+                continue
+            fetcher = _BOARD_FETCHERS.get(name)
+            if fetcher is None:
+                logger.warning("unknown board %s, skipping", name)
+                continue
+            try:
+                jobs, ok = await fetcher(url)
+            except NotImplementedError as e:
+                logger.info("%s not implemented yet: %s", name, e)
+                continue
+            except Exception as e:
+                # One bad board should never block the others in the same run
+                # (see module docstring) — any exception a real fetch_* raises
+                # (expired session, timeout, ...) is caught here, not just the
+                # NotImplementedError stubs above.
+                logger.error("%s fetch failed: %s", name, e)
+                health = state.record_health(health, name, False)
+                continue
+            health = state.record_health(health, name, ok, len(jobs))
+            all_jobs.extend(jobs)
+            await asyncio.sleep(random.uniform(1.5, 3.0))
 
-    newgrad_jobs, newgrad_ok = await fetch_newgrad_minisite()
-    health = state.record_health(health, "newgrad-jobs", newgrad_ok, len(newgrad_jobs))
-    all_jobs.extend(newgrad_jobs)
+        newgrad_jobs, newgrad_ok = await fetch_newgrad_minisite()
+        health = state.record_health(health, "newgrad-jobs", newgrad_ok, len(newgrad_jobs))
+        all_jobs.extend(newgrad_jobs)
 
-    google_any_ok = False
-    google_job_count = 0
-    for domain in ATS_DOMAINS:
-        jobs, ok = await fetch_google_boolean(domain)
-        google_any_ok = google_any_ok or ok
-        google_job_count += len(jobs)
-        all_jobs.extend(jobs)
-        await asyncio.sleep(random.uniform(1.5, 3.0))
-    # At-least-one-success policy: individual domains hit CAPTCHA often
-    # (see fetch_google_boolean docstring), so ANDing all of them would mark
-    # google-search unhealthy on nearly every run — one live domain is enough
-    # to call the source itself up.
-    health = state.record_health(health, "google-search", google_any_ok, google_job_count)
+    if sources in ("all", "google"):
+        google_jobs, health = await run_google_search(health)
+        all_jobs.extend(google_jobs)
+
     state.save_health(health)
 
     with open(output_path, "w") as f:
@@ -400,7 +534,12 @@ async def _run(boards_path: str, output_path: str) -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="[board_scraper] %(levelname)s %(message)s")
     ap = argparse.ArgumentParser(description="Daily job-board aggregator scraper")
-    ap.add_argument("--boards", required=True, help="path to data/job_boards.json")
+    ap.add_argument("--boards", help="path to data/job_boards.json (required unless --sources google)")
     ap.add_argument("--output", default="board_jobs.json", help="where to write scraped jobs")
+    ap.add_argument("--sources", choices=["all", "boards", "google"], default="all",
+                    help="which sources to run — the boards and Google search have separate "
+                         "workflows and schedules (daily vs every 3h)")
     args = ap.parse_args()
-    asyncio.run(_run(args.boards, args.output))
+    if args.sources in ("all", "boards") and not args.boards:
+        ap.error("--boards is required unless --sources google")
+    asyncio.run(_run(args.boards, args.output, args.sources))

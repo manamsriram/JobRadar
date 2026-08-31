@@ -98,15 +98,15 @@ def test_parse_newgrad_rows_handles_empty_html():
     assert bs._parse_newgrad_rows("") == []
 
 
-def test_build_google_query_includes_domain_and_date_filter():
-    q = bs._build_google_query("greenhouse.io")
-    assert "site%3Agreenhouse.io" in q or "site:greenhouse.io" in q
-    assert "tbs=qdr%3Ad" in q or "tbs=qdr:d" in q
-    assert q.startswith("https://www.google.com/search?")
+def test_search_url_includes_query_and_past_24h_filter():
+    url = bs._search_url("(swe) (site:greenhouse.io)")
+    assert "site%3Agreenhouse.io" in url or "site:greenhouse.io" in url
+    assert "tbs=qdr%3Ad" in url or "tbs=qdr:d" in url
+    assert url.startswith("https://www.google.com/search?")
 
 
-def test_build_google_query_excludes_senior_level_terms():
-    q = bs._build_google_query("lever.co")
+def test_build_queries_excludes_senior_level_terms():
+    q = bs._build_google_queries(["swe"], ["lever.co"])[0]
     assert "-senior" in q
 
 
@@ -120,7 +120,7 @@ _SERP_HTML = """
 
 
 def test_parse_google_serp_keeps_only_matching_domain_links():
-    jobs = bs._parse_google_serp(_SERP_HTML, "greenhouse.io")
+    jobs = bs._parse_google_serp(_SERP_HTML, ["greenhouse.io"])
     assert len(jobs) == 1
     assert jobs[0]["url"] == "https://boards.greenhouse.io/acme/jobs/123"
     assert jobs[0]["title"] == "Software Engineer New Grad at Acme"
@@ -128,7 +128,7 @@ def test_parse_google_serp_keeps_only_matching_domain_links():
 
 
 def test_parse_google_serp_handles_empty_html():
-    assert bs._parse_google_serp("", "greenhouse.io") == []
+    assert bs._parse_google_serp("", ["greenhouse.io"]) == []
 
 
 import asyncio
@@ -150,3 +150,84 @@ def test_login_page_raises_clear_error_when_session_not_captured(monkeypatch, tm
     monkeypatch.setattr(bs, "AUTH_STATE_PATH", str(tmp_path / "auth_state.json"))
     with pytest.raises(FileNotFoundError, match="save_login_session.py"):
         asyncio.run(bs._login_page(None))
+
+
+# ---- Google boolean search ----
+
+def test_title_groups_cover_every_title_exactly_once():
+    titles = [f"t{i}" for i in range(34)]
+    groups = bs._title_groups(titles, per_group=5)
+    flat = [t for g in groups for t in g]
+    assert flat == titles
+    assert len(groups) == 7
+
+
+def test_every_planned_query_fits_googles_word_cap():
+    """The whole point of sharding: Google silently drops everything past
+    32 words, so no generated query may exceed the budget."""
+    for hour in range(24):
+        for q in bs.plan_google_queries(hour=hour):
+            assert len(q.split()) <= bs.GOOGLE_MAX_QUERY_TOKENS, q
+
+
+def test_planned_queries_cover_all_ats_domains():
+    domains_seen = set()
+    for q in bs.plan_google_queries(hour=0):
+        domains_seen |= {d for d in bs.ATS_DOMAINS if f"site:{d}" in q}
+    assert domains_seen == set(bs.ATS_DOMAINS)
+
+
+def test_title_group_rotates_across_the_day():
+    first = bs.plan_google_queries(hour=0)[0]
+    later = bs.plan_google_queries(hour=3)[0]
+    assert first != later
+
+
+def test_build_queries_splits_when_domains_overflow_budget():
+    many = [f"domain{i}.example.com" for i in range(30)]
+    queries = bs._build_google_queries(["swe"], many)
+    assert len(queries) > 1
+    assert all(len(q.split()) <= bs.GOOGLE_MAX_QUERY_TOKENS for q in queries)
+
+
+def test_serp_parser_keeps_only_target_ats_links():
+    html = """
+    <a href="https://jobs.lever.co/acme/123">Software Engineer, New Grad</a>
+    <a href="https://example.com/blog">Some unrelated article</a>
+    <a href="https://boards.greenhouse.io/acme/jobs/456">Backend Engineer I</a>
+    <a href="https://jobs.lever.co/acme/123">Software Engineer, New Grad</a>
+    <a href="https://jobs.lever.co/acme/789">Hi</a>
+    """
+    jobs = bs._parse_google_serp(html, ["lever.co", "greenhouse.io"])
+    urls = [j["url"] for j in jobs]
+    assert urls == [
+        "https://jobs.lever.co/acme/123",
+        "https://boards.greenhouse.io/acme/jobs/456",
+    ]
+    assert all(j["source"] == "google-search" for j in jobs)
+
+
+def test_captcha_detection():
+    assert bs._is_captcha("https://www.google.com/sorry/index?continue=x", "")
+    assert bs._is_captcha("https://www.google.com/search?q=x", "<a href='/sorry/index'>")
+    assert not bs._is_captcha("https://www.google.com/search?q=x", "<html>results</html>")
+
+
+def test_backoff_blocks_then_expires():
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+    health = bs.mark_google_blocked({}, now=now)
+    assert bs.is_google_backing_off(health, now=now + timedelta(hours=1))
+    assert not bs.is_google_backing_off(
+        health, now=now + timedelta(hours=bs.GOOGLE_BLOCK_BACKOFF_HOURS + 1)
+    )
+
+
+def test_corrupt_blocked_until_does_not_wedge_source_off():
+    assert not bs.is_google_backing_off({"google-search": {"blocked_until": "not-a-date"}})
+
+
+def test_clear_google_block_is_safe_when_never_blocked():
+    assert bs.clear_google_block({}) == {}
+    health = bs.clear_google_block(bs.mark_google_blocked({}))
+    assert "blocked_until" not in health["google-search"]

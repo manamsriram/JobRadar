@@ -1,0 +1,55 @@
+# Every 3h, unlike job_boards_scraper.yml's daily run: the Google boolean
+# search has no saved login session to protect, and fresher ATS postings are
+# the whole point of it. Request volume is kept sane by the scraper's own
+# CAPTCHA backoff (GOOGLE_BLOCK_BACKOFF_HOURS) rather than by the schedule —
+# see the "Google boolean search" section of backend/scrapers/board_scraper.py.
+#
+# Each run issues only a couple of queries: one rotating group of job titles
+# packed with as many site: domains as Google's 32-word query cap allows. The
+# group rotates by UTC hour, so a day of runs covers the whole title list.
+#
+# Requires the INGEST_URL / INGEST_TOKEN repository secrets (same ones
+# playwright_scraper.yml and job_boards_scraper.yml use), plus SERPER_API_KEY:
+# scraping google.com/search from a runner IP is CAPTCHA-walled on the first
+# request, so the search goes through Serper's API (backend/search_api.py).
+# Without the secret the run falls back to DuckDuckGo's free endpoint, which
+# throttles to 202 after a few requests per IP — expect thin results.
+name: google-search
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */3 * * *" # every 3 hours
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps + Chromium
+        run: |
+          pip install -r backend/requirements.txt
+          playwright install chromium --with-deps
+      - name: Search
+        working-directory: backend
+        env:
+          DATA_DIR: ${{ github.workspace }}/data
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+        run: python -m scrapers.board_scraper --sources google --output google_jobs.json
+      - name: POST to /api/ingest
+        env:
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+        run: |
+          curl -sf -X POST "$INGEST_URL/api/ingest" \
+            -H "X-Ingest-Token: $INGEST_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @backend/google_jobs.json

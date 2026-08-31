@@ -1,8 +1,8 @@
 # Daily, not every-30-min like playwright_scraper.yml: the login-gated
-# boards use a saved session that shouldn't be hammered, and the Google
-# boolean search is confirmed CAPTCHA-prone on first request (see
-# docs/superpowers/specs/2026-07-31-job-boards-design.md) — low frequency
-# keeps both risks down. Requires INGEST_URL / INGEST_TOKEN (same secrets
+# boards use a saved session that shouldn't be hammered — low frequency
+# keeps that risk down. The Google boolean search used to ride along here
+# but now has its own every-3h workflow (google_search.yml), so this run
+# passes --sources boards to avoid doing it twice. Requires INGEST_URL / INGEST_TOKEN (same secrets
 # as playwright_scraper.yml) plus AUTH_STATE (contents of a locally-run
 # scripts/save_login_session.py's data/auth_state.json) once Handshake/
 # Jobright/Simplify are implemented — see Task 6 in the implementation plan.
@@ -39,7 +39,8 @@ jobs:
         working-directory: backend
         env:
           DATA_DIR: ${{ github.workspace }}/data
-        run: python -m scrapers.board_scraper --boards ../data/job_boards.json --output board_jobs.json
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+        run: python -m scrapers.board_scraper --sources boards --boards ../data/job_boards.json --output board_jobs.json
       - name: POST to /api/ingest
         env:
           INGEST_URL: ${{ secrets.INGEST_URL }}
