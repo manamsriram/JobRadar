@@ -77,3 +77,25 @@ def test_offer_pending_scorecard_can_come_from_self_loop_event():
 
 def test_hired_reachable_from_offer_pending():
     validate_transition(OFFER_PENDING, HIRED, [])
+
+
+def test_unreachable_database_disables_only_the_pipeline(monkeypatch):
+    """A paused Supabase project once took the whole app down at startup —
+    jobs and resumes are JSON files and never touch Postgres."""
+    import asyncio
+
+    import pytest
+
+    import pipeline_db
+
+    async def boom(*args, **kwargs):
+        raise OSError("(ENOTFOUND) tenant/user not found")
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@example.invalid/postgres")
+    monkeypatch.setattr(pipeline_db.asyncpg, "create_pool", boom)
+    monkeypatch.setattr(pipeline_db, "_pool", None)
+
+    asyncio.run(pipeline_db.init_pool())  # must not raise
+
+    with pytest.raises(pipeline_db.PipelineUnavailableError):
+        pipeline_db.get_pool()

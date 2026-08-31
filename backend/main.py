@@ -39,7 +39,13 @@ RESUME_MAX_BYTES = 2 * 1024 * 1024
 async def lifespan(app: FastAPI):
     # Run once at startup (not just on the weekly visa_sponsor_loop timer) so
     # all seeded companies are live immediately instead of after the first interval.
-    await visa_sponsors.merge_seed_companies(state.load_companies())
+    # Nothing here may be fatal: the app's core (jobs, resumes, outreach) is
+    # JSON files on disk, and a slow network or a paused database must not
+    # stop it from serving.
+    try:
+        await visa_sponsors.merge_seed_companies(state.load_companies())
+    except Exception as e:
+        logger.error("visa-sponsor seed merge failed at startup: %s", e)
     await pipeline_db.init_pool()
     pipeline_events.register(send_pipeline_alert)
     tasks = [
@@ -57,6 +63,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.exception_handler(pipeline_db.PipelineUnavailableError)
+async def _pipeline_unavailable(request: Request, exc: pipeline_db.PipelineUnavailableError):
+    """Pipeline tracking is one optional feature; only its own routes fail."""
+    return JSONResponse({"detail": str(exc)}, status_code=503)
 # No CORS: the React build is served same-origin from this app (StaticFiles below).
 
 # Shared secret with the Vercel proxy (frontend/api/[...path].ts) — rejects

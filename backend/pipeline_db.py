@@ -4,13 +4,21 @@ i-am-building-a-reactive-pearl.md). Connects as the least-privilege jobradar_app
 role so the ledger's append-only RLS grants are actually enforced.
 """
 import json
+import logging
 import os
 
 import asyncpg
 
 from pipeline_state import validate_transition
 
+logger = logging.getLogger(__name__)
+
 _pool: asyncpg.Pool | None = None
+
+
+class PipelineUnavailableError(RuntimeError):
+    """The pipeline database isn't usable. Callers map this to a 503 — it is
+    never a reason to fail a request that has nothing to do with Postgres."""
 
 
 async def _init_connection(conn: asyncpg.Connection) -> None:
@@ -25,7 +33,15 @@ async def init_pool() -> None:
     dsn = os.getenv("DATABASE_URL")
     if not dsn:
         return  # pipeline feature is optional — absence disables its routes, not the app
-    _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5, init=_init_connection)
+    try:
+        _pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5, init=_init_connection)
+    except Exception as e:
+        # An unreachable database has to degrade exactly like an absent DSN.
+        # A paused Supabase project (ENOTFOUND tenant/user) killed startup and
+        # took jobs, resumes and outreach down with it — none of which touch
+        # Postgres at all.
+        logger.error("pipeline pool unavailable, pipeline routes disabled: %s", e)
+        _pool = None
 
 
 async def close_pool() -> None:
@@ -37,7 +53,8 @@ async def close_pool() -> None:
 
 def get_pool() -> asyncpg.Pool:
     if _pool is None:
-        raise RuntimeError("pipeline_db pool not initialized — DATABASE_URL not set?")
+        raise PipelineUnavailableError(
+            "pipeline database unavailable — DATABASE_URL unset or unreachable")
     return _pool
 
 
