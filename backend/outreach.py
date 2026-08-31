@@ -295,21 +295,51 @@ def parse_candidate_title(anchor_text: str) -> tuple[str | None, str | None]:
     return name, title
 
 
-def candidates_from_results(results: list[dict], domain: str) -> list[dict]:
+_COMPANY_SUFFIXES = re.compile(r"\b(inc|llc|corp|corporation|co|ltd|company)\b\.?",
+                                re.IGNORECASE)
+
+
+def _normalize_company(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", _COMPANY_SUFFIXES.sub("", text or "").lower())
+
+
+def _company_matches(anchor_text: str, company: str) -> bool:
+    """Whether the target company name shows up anywhere in the SERP text.
+
+    LinkedIn titles read "Name - Title - Company | LinkedIn" — without this
+    check any recruiter-shaped name anywhere gets kept, including people at a
+    similarly-named company or who no longer work there. No target company
+    (empty string) can't be checked, so it passes rather than dropping every
+    LinkedIn result.
+    """
+    norm_company = _normalize_company(company)
+    return not norm_company or norm_company in _normalize_company(anchor_text)
+
+
+def candidates_from_results(results: list[dict], domain: str,
+                            company: str = "") -> list[dict]:
     """Keep the results that point at a LinkedIn profile or the company's own
-    site, and that carry something shaped like a person's name."""
+    site, and that carry something shaped like a person's name.
+
+    A company-site URL already proves the company match via `domain`; a
+    LinkedIn profile does not, so it additionally needs the company name
+    somewhere in the SERP title.
+    """
     out, seen = [], set()
     for r in results:
         href = r.get("url") or ""
         if not href.startswith("http") or href in seen:
             continue
+        anchor_text = r.get("title") or ""
         if "linkedin.com/in/" in href:
             source_type = "linkedin"
+            if not _company_matches(anchor_text, company):
+                continue
         elif domain and domain in href:
             source_type = "company_site"
         else:
             continue
-        name, title = parse_candidate_title(r.get("title") or "")
+        name, title = parse_candidate_title(anchor_text)
         if not name:
             continue
         seen.add(href)
@@ -321,10 +351,10 @@ def candidates_from_results(results: list[dict], domain: str) -> list[dict]:
     return out
 
 
-def _parse_recruiter_serp(html: str, domain: str) -> list[dict]:
+def _parse_recruiter_serp(html: str, domain: str, company: str = "") -> list[dict]:
     """Raw-HTML path, used by the Chromium fallback backend and its tests."""
     import search_api
-    return candidates_from_results(search_api.parse_serp_anchors(html), domain)
+    return candidates_from_results(search_api.parse_serp_anchors(html), domain, company)
 
 
 async def discover_candidates(company: str, domain: str,
@@ -343,7 +373,7 @@ async def discover_candidates(company: str, domain: str,
 
     candidates: list[dict] = []
     for query in build_recruiter_queries(company, domain):
-        html_jobs, ok, blocked = await _fetch_serp(query, domain)
+        html_jobs, ok, blocked = await _fetch_serp(query, domain, company)
         if blocked:
             health = bs.mark_google_blocked(health)
             return [], health, bs.google_blocked_until(health)
@@ -355,7 +385,7 @@ async def discover_candidates(company: str, domain: str,
     return rank_contacts(candidates), health, None
 
 
-async def _fetch_serp(query: str, domain: str) -> tuple[list[dict], bool, bool]:
+async def _fetch_serp(query: str, domain: str, company: str = "") -> tuple[list[dict], bool, bool]:
     """Recruiter twin of fetch_google_boolean — same backend ladder, different
     parser. No recency filter: a recruiter's profile page is worth finding
     whether it was indexed today or last year."""
@@ -365,7 +395,7 @@ async def _fetch_serp(query: str, domain: str) -> tuple[list[dict], bool, bool]:
     if blocked or not ok:
         return [], ok, blocked
     try:
-        return candidates_from_results(results, domain), True, False
+        return candidates_from_results(results, domain, company), True, False
     except Exception as e:
         logger.error("recruiter SERP parse failed: %s", e)
         return [], False, False

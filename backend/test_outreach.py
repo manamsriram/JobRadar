@@ -121,9 +121,20 @@ def test_parse_recruiter_serp_keeps_only_profiles_and_company_pages():
     <a href="https://randomblog.com/x">Jane Doe - Recruiter</a>
     <a href="https://www.linkedin.com/in/nobody">Careers at Acme</a>
     """
-    found = outreach._parse_recruiter_serp(html, "acme.com")
+    found = outreach._parse_recruiter_serp(html, "acme.com", "Acme")
     assert [c["source_type"] for c in found] == ["linkedin", "company_site"]
     assert found[0]["origin"] == "search"
+
+
+def test_parse_recruiter_serp_drops_linkedin_profiles_at_other_companies():
+    # A recruiter-shaped name whose LinkedIn title names a different (or former)
+    # employer must not be surfaced as an Acme contact.
+    html = """
+    <a href="https://www.linkedin.com/in/janedoe">Jane Doe - Recruiter - Acme Robotics | LinkedIn</a>
+    <a href="https://www.linkedin.com/in/johnroe">John Roe - Recruiter - Widgets Co | LinkedIn</a>
+    """
+    found = outreach._parse_recruiter_serp(html, "acme.com", "Acme")
+    assert [c["source_url"] for c in found] == ["https://www.linkedin.com/in/janedoe"]
 
 
 def test_build_report_pairs_candidates_with_guesses():
