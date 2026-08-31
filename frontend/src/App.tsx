@@ -6,8 +6,9 @@ import LiveBadge from "./components/LiveBadge";
 import SourceHealth from "./components/SourceHealth";
 import ResumePanel from "./components/ResumePanel";
 import PipelineBoard from "./components/PipelineBoard";
+import OutreachLog from "./components/OutreachLog";
 
-type Tab = "active" | "applied" | "pipeline";
+type Tab = "active" | "applied" | "pipeline" | "outreach";
 
 // Same-origin in prod (static build); Vite proxies /api to :8000 in dev.
 export default function App() {
@@ -79,7 +80,7 @@ export default function App() {
         </div>
         <ResumePanel />
         <div className="flex gap-2 mb-6">
-          {(["active", "applied", "pipeline"] as Tab[]).map((t) => (
+          {(["active", "applied", "pipeline", "outreach"] as Tab[]).map((t) => (
             <button
               key={t}
               className={`font-mono text-xs uppercase tracking-wider px-3 py-1.5 border ${
@@ -89,12 +90,14 @@ export default function App() {
               }`}
               onClick={() => setTab(t)}
             >
-              {t === "active" ? "Jobs" : t === "applied" ? "Applied" : "Pipeline"}
+              {t === "active" ? "Jobs" : t === "applied" ? "Applied" : t === "pipeline" ? "Pipeline" : "Outreach"}
             </button>
           ))}
         </div>
         {tab === "pipeline" ? (
           <PipelineBoard />
+        ) : tab === "outreach" ? (
+          <OutreachLog />
         ) : (
           <>
             <FilterBar filters={filters} onChange={setFilters} />

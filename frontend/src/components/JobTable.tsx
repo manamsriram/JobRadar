@@ -1,10 +1,22 @@
 import { Fragment, useEffect, useState } from "react";
 import type { Contact, Job } from "../hooks/useSSE";
 import ContactCard from "./ContactCard";
+import OutreachPanel from "./OutreachPanel";
 
 interface ContactResult {
   contacts: Contact[];
   domain_guessed: boolean;
+}
+
+// Contacts arrive from two endpoints — Hunter lookups (/contacts) and free
+// recruiter discovery (/outreach, which also carries send eligibility). Same
+// person can appear in both; the discovered record wins because it is the one
+// with eligibility on it.
+function mergeContacts(existing: Contact[], incoming: Contact[]): Contact[] {
+  const key = (c: Contact) => c.source_url ?? c.email ?? c.name;
+  const byKey = new Map(existing.map((c) => [key(c), c]));
+  for (const c of incoming) byKey.set(key(c), { ...byKey.get(key(c)), ...c });
+  return [...byKey.values()];
 }
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -27,17 +39,25 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
   const [contactResults, setContactResults] = useState<Record<string, ContactResult>>({});
   const [contactBusy, setContactBusy] = useState<string | null>(null);
   const [contactError, setContactError] = useState<Record<string, string>>({});
+  const [reachOut, setReachOut] = useState<{ jobId: string; contact: Contact } | null>(null);
 
   // Expanding a row shows any contacts already found for that company (free
   // cache read) without needing to click "Find Contacts" first.
   useEffect(() => {
     if (!expanded || contactResults[expanded]) return;
-    fetch(`/api/jobs/${expanded}/contacts`)
-      .then((r) => r.json())
-      .then((data) =>
+    Promise.all([
+      fetch(`/api/jobs/${expanded}/contacts`).then((r) => (r.ok ? r.json() : { contacts: [] })),
+      // Cache-only: no search, no credit. Adds eligibility to whatever was
+      // discovered for this company before.
+      fetch(`/api/jobs/${expanded}/outreach`).then((r) => (r.ok ? r.json() : { candidates: [] })),
+    ])
+      .then(([hunter, report]) =>
         setContactResults((prev) => ({
           ...prev,
-          [expanded]: { contacts: data.contacts, domain_guessed: data.domain_guessed },
+          [expanded]: {
+            contacts: mergeContacts(hunter.contacts ?? [], report.candidates ?? []),
+            domain_guessed: hunter.domain_guessed ?? report.domain_guessed ?? false,
+          },
         }))
       )
       .catch(() => {});
@@ -56,7 +76,10 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
       const data = await res.json();
       setContactResults((prev) => ({
         ...prev,
-        [id]: { contacts: data.contacts, domain_guessed: data.domain_guessed },
+        [id]: {
+          contacts: mergeContacts(prev[id]?.contacts ?? [], data.contacts),
+          domain_guessed: data.domain_guessed,
+        },
       }));
       if (!data.new_contact) {
         setContactError((prev) => ({ ...prev, [id]: "no additional contact found" }));
@@ -65,6 +88,39 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
       setContactError((prev) => ({
         ...prev,
         [id]: e instanceof Error ? e.message : "contact lookup failed",
+      }));
+    } finally {
+      setContactBusy(null);
+    }
+  }
+
+  // Free recruiter discovery (Google search, cached 7 days per company) —
+  // distinct from the Hunter lookup above, which spends a credit. Results are
+  // guesses with evidence, merged into the same contact list.
+  async function discoverRecruiters(id: string) {
+    setContactBusy(id);
+    setContactError((prev) => ({ ...prev, [id]: "" }));
+    try {
+      const res = await fetch(`/api/jobs/${id}/outreach/discover`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail ?? `recruiter search failed: ${res.status}`);
+      }
+      const data = await res.json();
+      setContactResults((prev) => ({
+        ...prev,
+        [id]: {
+          contacts: mergeContacts(prev[id]?.contacts ?? [], data.candidates),
+          domain_guessed: data.domain_guessed,
+        },
+      }));
+      if (data.candidates.length === 0) {
+        setContactError((prev) => ({ ...prev, [id]: "no recruiters found for this company" }));
+      }
+    } catch (e) {
+      setContactError((prev) => ({
+        ...prev,
+        [id]: e instanceof Error ? e.message : "recruiter search failed",
       }));
     } finally {
       setContactBusy(null);
@@ -178,6 +234,16 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
                           ? "More contacts"
                           : "Contacts"}
                     </button>
+                    <button
+                      className="px-2 py-1 border border-gray-400 font-mono text-[10px] uppercase tracking-wide text-gray-600 hover:border-black hover:text-black disabled:opacity-50"
+                      disabled={contactBusy === job.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        discoverRecruiters(job.id);
+                      }}
+                    >
+                      Recruiters
+                    </button>
                     {mode === "applied" ? (
                       <button
                         className="px-2 py-1 border border-gray-400 font-mono text-[10px] uppercase tracking-wide text-gray-600 hover:border-red-600 hover:text-red-600"
@@ -229,7 +295,10 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
                           <div className="flex gap-3 flex-wrap items-start">
                             {contacts.map((contact, ci) => (
                               <div key={ci} className="flex flex-col gap-1 items-start">
-                                <ContactCard contact={contact} />
+                                <ContactCard
+                                  contact={contact}
+                                  onReachOut={() => setReachOut({ jobId: job.id, contact })}
+                                />
                                 <a
                                   href={`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(
                                     `${contact.name} ${job.company}`
@@ -246,6 +315,13 @@ export default function JobTable({ jobs, mode = "active", onApplied, onDelete }:
                         </div>
                       )}
                       {error && <p className="text-red-600 text-xs">{error}</p>}
+                      {reachOut?.jobId === job.id && (
+                        <OutreachPanel
+                          job={job}
+                          contact={reachOut.contact}
+                          onClose={() => setReachOut(null)}
+                        />
+                      )}
                     </td>
                   </tr>
                 );

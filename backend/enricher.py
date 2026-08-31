@@ -181,3 +181,51 @@ async def find_contact(company_name: str, posting_url: str | None) -> dict:
     # (e.g. after companies.json gets a corrected domain).
     _append_cached(domain, updated, guessed)
     return {"contacts": updated, "domain_guessed": guessed, "new_contact": True}
+
+
+# ---- Email verification (outreach phase 2) ----
+# Separate endpoint from domain-search above, same credit ledger: Hunter bills
+# the verifier per address checked. This is the expensive half of outreach, so
+# outreach.py only ever calls it for the top guess at a *new* domain — once a
+# pattern is learned there, later contacts cost nothing.
+_VERIFY_STATUS_MAP = {
+    "valid": "valid",
+    "accept_all": "accept_all",
+    "invalid": "invalid",
+    "disposable": "invalid",
+    "unknown": "unknown",
+    "webmail": "unknown",
+}
+
+
+async def verify_email(email: str) -> dict:
+    """Check one address. Returns {"status", "score", "accept_all"} or
+    {"error": ...}. A provider failure and an invalid address are different
+    answers — never collapse them, or a network blip teaches the pattern
+    engine that a good pattern failed."""
+    api_key = os.getenv("HUNTER_API_KEY")
+    if not api_key:
+        return {"error": "no_api_key"}
+    if not budget_remaining():
+        return {"error": "quota_exhausted"}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                "https://api.hunter.io/v2/email-verifier",
+                params={"email": email, "api_key": api_key}, timeout=15,
+            )
+            r.raise_for_status()
+            data = r.json().get("data") or {}
+    except (httpx.HTTPError, ValueError) as e:
+        print(f"[enricher] verify error: {e}")
+        return {"error": "provider_error"}
+
+    _record_credit(1)
+    raw = (data.get("status") or "unknown").lower()
+    return {
+        "status": _VERIFY_STATUS_MAP.get(raw, "unknown"),
+        "score": data.get("score"),
+        "accept_all": bool(data.get("accept_all")),
+        "raw_status": raw,
+    }

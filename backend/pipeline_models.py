@@ -52,3 +52,29 @@ class PipelineEventOut(BaseModel):
     note: str | None
     scorecard: dict[str, Any] | None
     metadata: dict[str, Any]
+
+
+class SendOutreachIn(BaseModel):
+    """One outreach email, composed elsewhere (the drafting skill) and sent
+    through the gates in main.py. `override` waives only the confidence gate —
+    the kill switch, the daily cap and dedup are not overridable."""
+    email: str
+    subject: str
+    body: str
+    source_url: str | None = None
+    override: bool = False
+
+    @field_validator("email")
+    @classmethod
+    def _looks_like_an_address(cls, v: str) -> str:
+        local, sep, domain = v.partition("@")
+        if not (local and sep and "." in domain) or any(c.isspace() for c in v):
+            raise ValueError("email must be a single well-formed address")
+        return v
+
+    @field_validator("subject", "body")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("subject and body must not be blank")
+        return v
