@@ -20,8 +20,15 @@ from datetime import datetime, timedelta, timezone
 # local dev (e.g. DATA_DIR=./data uvicorn main:app).
 DATA_DIR = pathlib.Path(os.getenv("DATA_DIR", "/data"))
 SEEN_JOBS_FILE = DATA_DIR / "seen_jobs.json"
-COMPANIES_FILE = DATA_DIR / "companies.json"
-FUNDING_QUEUE_FILE = DATA_DIR / "funding_queue.json"
+# Seed vs. live: docker-compose mounts the repo's ./data as /data, so a seed
+# file tracked in git is literally the file the app writes to — and every
+# deploy's `git pull` then aborts on the VM's own runtime changes. The seeds
+# stay read-only and tracked; each has a gitignored .live.json twin the app
+# owns, which falls back to the seed until the first write.
+COMPANIES_SEED_FILE = DATA_DIR / "companies.json"
+COMPANIES_FILE = DATA_DIR / "companies.live.json"
+FUNDING_QUEUE_SEED_FILE = DATA_DIR / "funding_queue.json"
+FUNDING_QUEUE_FILE = DATA_DIR / "funding_queue.live.json"
 SEEN_FUNDING_FILE = DATA_DIR / "seen_funding.json"
 SOURCE_HEALTH_FILE = DATA_DIR / "source_health.json"
 COMPANY_ALIASES_FILE = DATA_DIR / "company_aliases.json"
@@ -156,9 +163,15 @@ def delete_job(seen: dict, job_id: str) -> bool:
     return seen.pop(job_id, None) is not None
 
 
-# ---- Companies (seed lives in repo data/, mounted to /data) ----
+def _read_seeded(live: pathlib.Path, seed: pathlib.Path, default):
+    """The live file once it exists, else the tracked seed it started from."""
+    data = _read_json(live, None)
+    return data if data is not None else _read_json(seed, default)
+
+
+# ---- Companies (tracked seed in repo data/, live twin written at runtime) ----
 def load_companies() -> list[dict]:
-    return _read_json(COMPANIES_FILE, [])
+    return _read_seeded(COMPANIES_FILE, COMPANIES_SEED_FILE, [])
 
 
 def save_companies(companies: list[dict]) -> None:
@@ -184,7 +197,7 @@ def load_company_aliases() -> dict:
 
 # ---- Funding signal queue ----
 def load_funding_queue() -> list[dict]:
-    return _read_json(FUNDING_QUEUE_FILE, [])
+    return _read_seeded(FUNDING_QUEUE_FILE, FUNDING_QUEUE_SEED_FILE, [])
 
 
 def save_funding_queue(queue: list[dict]) -> None:

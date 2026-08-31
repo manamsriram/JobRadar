@@ -1,5 +1,10 @@
 # Deploys to the Oracle VM on every push to main: SSH in, pull, rebuild the
 # compose stack. .env lives only on the VM (gitignored), never touched here.
+#
+# script_stop matters more than it looks: without it only the last command's
+# exit code counts, so a `git pull` aborting on a dirty working tree still
+# reported a green deploy while compose rebuilt the old code. It went unnoticed
+# for weeks. Any failing step must fail the job.
 name: deploy
 
 on:
@@ -20,6 +25,7 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
+          script_stop: true
           script: |
             cd ~/JobRadar
             git pull --ff-only

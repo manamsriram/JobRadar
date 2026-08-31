@@ -15,6 +15,9 @@ data/resume_*
 data/ai_budget.json
 data/auth_state.json
 data/link_patterns.json
+# Live twins of the tracked seeds — the app writes these, git never sees them
+# (see the seed/live note in backend/state.py).
+data/*.live.json
 data/source_health.json
 .DS_Store
 

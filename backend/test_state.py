@@ -239,3 +239,22 @@ def test_link_patterns_roundtrip(tmp_path, monkeypatch):
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+def test_companies_fall_back_to_the_seed_until_first_write(tmp_path, monkeypatch):
+    import json
+
+    """The tracked seed is read-only: the app reads it until it has written a
+    live twin, and never writes back over it — a write to the seed is what
+    breaks `git pull` on the VM, since the repo's data/ is the mounted volume."""
+    seed = tmp_path / "companies.json"
+    live = tmp_path / "companies.live.json"
+    seed.write_text(json.dumps([{"name": "Seeded", "domain": "seed.com"}]))
+    monkeypatch.setattr(state, "COMPANIES_SEED_FILE", seed)
+    monkeypatch.setattr(state, "COMPANIES_FILE", live)
+
+    assert [c["name"] for c in state.load_companies()] == ["Seeded"]
+
+    state.save_companies([{"name": "Live", "domain": "live.com"}])
+    assert [c["name"] for c in state.load_companies()] == ["Live"]
+    assert json.loads(seed.read_text()) == [{"name": "Seeded", "domain": "seed.com"}]
