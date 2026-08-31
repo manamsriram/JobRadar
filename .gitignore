@@ -8,17 +8,17 @@ __pycache__/
 .venv/
 *.tsbuildinfo
 
-# Runtime state (seeds companies.json / funding_queue.json are tracked)
-data/seen_jobs.json
-data/seen_funding.json
-data/resume_*
-data/ai_budget.json
-data/auth_state.json
-data/link_patterns.json
-# Live twins of the tracked seeds — the app writes these, git never sees them
-# (see the seed/live note in backend/state.py).
-data/*.live.json
-data/source_health.json
+# Everything under data/ is runtime state except the five tracked seeds below.
+# Deny-by-default on purpose: the old per-file list silently let new state
+# files through, and company_contacts.json (recruiter names, verified email
+# addresses) was one `git add -A` from being published.
+data/*
+!data/companies.json
+!data/company_aliases.json
+!data/funding_queue.json
+!data/job_boards.json
+!data/visa_sponsor_seeds.json
+
 .DS_Store
 
 # Claude Code local session state (the shared skills under .claude/skills are tracked)
